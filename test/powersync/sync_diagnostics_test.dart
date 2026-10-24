@@ -28,10 +28,19 @@ void main() {
   group('serverCategory', () {
     test('maps the known servers and hides self-hosted URLs', () {
       expect(serverCategory(null), isNull);
-      expect(serverCategory(DEFAULT_SERVER_PROD), 'wger.de');
-      expect(serverCategory(DEFAULT_SERVER_TEST), 'dev.wger.de');
       expect(serverCategory('https://wger.my-private-nas.example'), 'self-hosted');
     });
+
+    test('without SERVER_URL the defaults are wger.de', () {
+      expect(serverCategory(DEFAULT_SERVER_PROD), 'wger.de');
+      expect(serverCategory(DEFAULT_SERVER_TEST), 'dev.wger.de');
+    }, skip: SERVER_URL_OVERRIDE != '');
+
+    test('SERVER_URL replaces both defaults and counts as self-hosted', () {
+      expect(DEFAULT_SERVER_PROD, SERVER_URL_OVERRIDE);
+      expect(DEFAULT_SERVER_TEST, SERVER_URL_OVERRIDE);
+      expect(serverCategory(DEFAULT_SERVER_PROD), 'self-hosted');
+    }, skip: SERVER_URL_OVERRIDE == '');
   });
 
   group('formatSyncDiagnostics', () {
