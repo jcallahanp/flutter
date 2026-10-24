@@ -74,6 +74,10 @@ String? categoriseSyncError(Object error) {
 /// Reduces [serverUrl] to a category for bug reports, so self-hosted URLs
 /// stay private. Null when the URL is unknown.
 String? serverCategory(String? serverUrl) {
+  // A build pointed at its own server is never wger.de
+  if (SERVER_URL_OVERRIDE != '' && serverUrl != null) {
+    return 'self-hosted';
+  }
   return switch (serverUrl) {
     null => null,
     DEFAULT_SERVER_PROD => 'wger.de',

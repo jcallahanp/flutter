@@ -1,0 +1,36 @@
+# Health platform (jcallahanp/health-system M0-05): debug APK and web build
+# for every PR. Steps mirror docs/app/BUILD.md in health-system.
+name: Health build check
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Debug APK and web
+    runs-on: ubuntu-latest
+    env:
+      # Repository variable; empty keeps the wger.de defaults
+      SERVER_URL: ${{ vars.SERVER_URL }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Common flutter setup
+        uses: ./.github/actions/flutter-common
+
+      - name: PowerSync web worker and sqlite3.wasm
+        run: dart run powersync:setup_web
+
+      - name: Build APK (debug)
+        run: flutter build apk --debug --dart-define=SERVER_URL=$SERVER_URL
+
+      - name: Build web
+        run: flutter build web --dart-define=SERVER_URL=$SERVER_URL

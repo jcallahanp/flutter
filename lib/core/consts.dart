@@ -44,11 +44,15 @@ const MIN_SERVER_VERSION = '2.7';
 /// and we don't want to fill the whole screen
 const double ICON_SIZE_SMALL = 20;
 
+/// Server baked in at build time with `--dart-define=SERVER_URL=https://…`.
+/// Empty unless set; when set it replaces both defaults below.
+const SERVER_URL_OVERRIDE = String.fromEnvironment('SERVER_URL');
+
 /// Default wger server during login
-const DEFAULT_SERVER_PROD = 'https://wger.de';
+const DEFAULT_SERVER_PROD = SERVER_URL_OVERRIDE != '' ? SERVER_URL_OVERRIDE : 'https://wger.de';
 
 // Default wger test server during development
-const DEFAULT_SERVER_TEST = 'https://dev.wger.de';
+const DEFAULT_SERVER_TEST = SERVER_URL_OVERRIDE != '' ? SERVER_URL_OVERRIDE : 'https://dev.wger.de';
 const TESTSERVER_USER_NAME = 'user';
 const TESTSERVER_PASSWORD = 'flutteruser';
 
