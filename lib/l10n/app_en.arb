@@ -1996,15 +1996,6 @@
   "@todayLoggedTitle": { "description": "Heading of today's list of logged doses" },
   "todayNothingLogged": "Nothing logged yet today",
   "@todayNothingLogged": { "description": "Shown when no dose is logged for today" },
-  "todayPendingEntries": "{count, plural, =1{1 entry pending} other{{count} entries pending}}",
-  "@todayPendingEntries": {
-    "description": "Line for typed entries that are waiting to be read by the server, shown with a pending chip",
-    "placeholders": {
-      "count": { "type": "int" }
-    }
-  },
-  "todayPending": "Pending",
-  "@todayPending": { "description": "Chip on the line of entries waiting to be parsed" },
   "todayNoSlots": "No slots in your routine yet.",
   "@todayNoSlots": { "description": "Empty state of the medication screen when no slots exist" },
   "todaySetUpRoutine": "Set up routine",
@@ -2073,7 +2064,7 @@
   "@entryWaiting": { "description": "State line of an entry the server has not read yet; the entry is stored on the device and syncs later" },
   "entryNoKey": "The server has no parser key yet, so your entry is kept as it is.",
   "@entryNoKey": { "description": "State line of an entry when the server has no key for reading it" },
-  "entryOverLimit": "The daily reading limit is reached; your entry is kept and can be retried tomorrow.",
+  "entryOverLimit": "The daily reading limit was reached, so this entry was not read. Your text is kept.",
   "@entryOverLimit": { "description": "State line of an entry when the server reached its daily limit" },
   "entryFailed": "This entry could not be read; your text is kept.",
   "@entryFailed": { "description": "State line of an entry the server failed to read" },
@@ -2085,8 +2076,8 @@
   "@entryReplyHint": { "description": "Hint of the field where the user answers the server question" },
   "entryReplySend": "Send answer",
   "@entryReplySend": { "description": "Tooltip of the button that sends the answer to the server question" },
-  "entryMarkRestTaken": "Mark the rest as taken",
-  "@entryMarkRestTaken": { "description": "Button that logs the remaining planned medications of a slot as taken" },
+  "entryMarkRestTaken": "Mark the rest of {slot} ({day}) as taken",
+  "@entryMarkRestTaken": { "description": "Button that logs the remaining planned medications of a slot on a day as taken", "placeholders": { "slot": { "type": "String" }, "day": { "type": "String" } } },
   "entryAddMedication": "Add it as an as-needed med",
   "@entryAddMedication": { "description": "Button that answers yes to adding a new as-needed medication" },
   "entryUndo": "Undo",
@@ -2105,8 +2096,6 @@
   "@historyNothing": { "description": "Shown when the chosen day has no logged dose" },
   "historyEditTitle": "Edit dose",
   "@historyEditTitle": { "description": "Title of the dialog that edits a logged dose" },
-  "historyStatus": "Status",
-  "@historyStatus": { "description": "Label of the status choice when editing a dose" },
   "historyAmountInvalid": "Enter 0 or more",
   "@historyAmountInvalid": { "description": "Error when the amount of a dose is empty or negative" },
   "historyAmountZero": "Must be 0 for skipped or missed",
@@ -2114,5 +2103,11 @@
   "historyDeleteTitle": "Delete this dose?",
   "@historyDeleteTitle": { "description": "Title of the dialog that confirms deleting a logged dose" },
   "historyDeleteBody": "The dose is removed from your history.",
-  "@historyDeleteBody": { "description": "Body of the dialog that confirms deleting a logged dose" }
+  "@historyDeleteBody": { "description": "Body of the dialog that confirms deleting a logged dose" },
+  "entryDayToday": "today",
+  "@entryDayToday": { "description": "The word for the current day inside a button label" },
+  "logBoxMicUnavailable": "Dictation is not available or not allowed on this device.",
+  "@logBoxMicUnavailable": { "description": "Shown under the text field after the microphone could not be started" },
+  "historyAmountPositive": "Must be above 0 for taken or partial",
+  "@historyAmountPositive": { "description": "Error when a taken or partial dose has an amount of zero" }
 }

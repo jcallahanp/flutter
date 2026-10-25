@@ -4,14 +4,22 @@ import 'package:wger/features/doses/widgets/missed_prompt.dart';
 
 class FakeSpeech implements SpeechInput {
   final bool available;
+  final bool plausible;
+  int initializeCalls = 0;
   void Function(String words)? onWords;
   VoidCallback? onDone;
   bool listening = false;
 
-  FakeSpeech({this.available = true});
+  FakeSpeech({this.available = true, this.plausible = true});
 
   @override
-  Future<bool> initialize() async => available;
+  bool get plausiblySupported => plausible;
+
+  @override
+  Future<bool> initialize() async {
+    initializeCalls++;
+    return available;
+  }
 
   @override
   Future<void> start(void Function(String words) onWords, {required VoidCallback onDone}) async {

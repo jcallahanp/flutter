@@ -56,9 +56,14 @@ void main() {
 
   Future<void> pump(WidgetTester tester, String entryId, {List<Medication>? meds}) async {
     final entry = (await tester.runAsync(() => entryOf(entryId)))!;
-    final replies = (await tester.runAsync(
-      () => repo.watchRawEntriesSince(DateTime(2000)).first,
-    ))!.where((e) => e.parentId == entryId).toList();
+    final all = (await tester.runAsync(() => repo.watchRawEntriesSince(DateTime(2000)).first))!;
+    final repliesOf = <String, List<RawEntry>>{};
+    for (final e in all) {
+      if (e.parentId != null) {
+        (repliesOf[e.parentId!] ??= []).add(e);
+      }
+    }
+    final slots = (await tester.runAsync(() => repo.watchSlots().first))!;
     await tester.pumpWidget(
       ProviderScope(
         overrides: [doseRepositoryProvider.overrideWithValue(repo)],
@@ -69,7 +74,8 @@ void main() {
             body: SingleChildScrollView(
               child: EntryCard(
                 entry: entry,
-                replies: replies,
+                repliesOf: repliesOf,
+                slots: slots,
                 medications: meds ?? const [],
                 now: now,
               ),
@@ -113,15 +119,17 @@ void main() {
   testWidgets('shows the question, the proposal button and a reply box', (tester) async {
     late String id;
     await tester.runAsync(() async {
+      final ids = await seedRoutine();
       id = await repo.createRawEntry('took my evening pills');
       await setState(id, 'needs_answer');
       await parseResult(
         id,
         question: 'Did you take the rest?',
-        proposal: {'type': 'mark_rest_taken', 'slot_id': 'x', 'date': '2026-10-24'},
+        proposal: {'type': 'mark_rest_taken', 'slot_id': ids.slot, 'date': '2026-10-24'},
       );
     });
     await pump(tester, id);
+    expect(find.text('Mark the rest of Evening (yesterday) as taken'), findsOneWidget);
     expect(find.text('took my evening pills'), findsOneWidget);
     expect(find.text('Did you take the rest?'), findsOneWidget);
     expect(find.byKey(const Key('entry-mark-rest-taken')), findsOneWidget);
@@ -256,7 +264,7 @@ void main() {
       'pending': 'Waiting to be read',
       'no_key': 'The server has no parser key yet, so your entry is kept as it is.',
       'over_limit':
-          'The daily reading limit is reached; your entry is kept and can be retried tomorrow.',
+          'The daily reading limit was reached, so this entry was not read. Your text is kept.',
       'failed': 'This entry could not be read; your text is kept.',
     };
     for (final MapEntry(key: state, value: line) in expected.entries) {
@@ -268,6 +276,94 @@ void main() {
       await pump(tester, id);
       expect(find.text(line), findsOneWidget, reason: state);
     }
+    await finish(tester);
+  });
+
+  testWidgets('a proposal date outside the last 7 days up to today shows no button', (
+    tester,
+  ) async {
+    for (final date in ['2026-10-26', '2026-10-17', '2026-10-10', 'garbage', '']) {
+      late String id;
+      await tester.runAsync(() async {
+        final ids = await repo.watchSlots().first.then((l) => l.isEmpty ? null : l.first.id);
+        final slot =
+            ids ??
+            await repo.saveSlot(name: 'Evening', usualTime: const TimeOfDay(hour: 21, minute: 0));
+        id = await repo.createRawEntry('entry $date');
+        await setState(id, 'needs_answer');
+        await parseResult(
+          id,
+          question: 'Mark the rest?',
+          proposal: {'type': 'mark_rest_taken', 'slot_id': slot, 'date': date},
+        );
+      });
+      await pump(tester, id);
+      expect(find.text('Mark the rest?'), findsOneWidget, reason: date);
+      expect(find.byKey(const Key('entry-mark-rest-taken')), findsNothing, reason: date);
+    }
+    // the edges are in: seven days back and today
+    for (final date in ['2026-10-18', '2026-10-25']) {
+      late String id;
+      await tester.runAsync(() async {
+        final slot = (await repo.watchSlots().first).first.id;
+        id = await repo.createRawEntry('edge $date');
+        await setState(id, 'needs_answer');
+        await parseResult(
+          id,
+          question: 'Edge?',
+          proposal: {'type': 'mark_rest_taken', 'slot_id': slot, 'date': date},
+        );
+      });
+      await pump(tester, id);
+      expect(find.byKey(const Key('entry-mark-rest-taken')), findsOneWidget, reason: date);
+    }
+    final doses = await tester.runAsync(() => repo.watchDosesBetween(DateTime(2026), now).first);
+    expect(doses, isEmpty);
+    await finish(tester);
+  });
+
+  testWidgets('the proposal goes away once the rest is marked taken', (tester) async {
+    late String id;
+    await tester.runAsync(() async {
+      final ids = await seedRoutine();
+      id = await repo.createRawEntry('took metformin');
+      await setState(id, 'needs_answer');
+      await parseResult(
+        id,
+        question: 'Mark the rest?',
+        proposal: {'type': 'mark_rest_taken', 'slot_id': ids.slot, 'date': '2026-10-25'},
+      );
+    });
+    await pump(tester, id);
+    await tester.tap(find.byKey(const Key('entry-mark-rest-taken')));
+    await settle(tester);
+    expect(find.byKey(const Key('entry-mark-rest-taken')), findsNothing);
+    await finish(tester);
+  });
+
+  testWidgets('replies nest to any depth and only the last open question has a reply box', (
+    tester,
+  ) async {
+    late String root;
+    await tester.runAsync(() async {
+      root = await repo.createRawEntry('took pills');
+      await setState(root, 'needs_answer');
+      await parseResult(root, question: 'Which pills?');
+      final first = await repo.createRawEntry('white ones', parentId: root);
+      await setState(first, 'needs_answer');
+      await parseResult(first, question: 'How many?');
+      final second = await repo.createRawEntry('two', parentId: first);
+      await setState(second, 'needs_answer');
+      await parseResult(second, question: 'Since when?');
+    });
+    await pump(tester, root);
+    expect(find.text('took pills'), findsOneWidget);
+    expect(find.text('white ones'), findsOneWidget);
+    expect(find.text('two'), findsOneWidget);
+    expect(find.text('Which pills?'), findsNothing);
+    expect(find.text('How many?'), findsNothing);
+    expect(find.text('Since when?'), findsOneWidget);
+    expect(find.byKey(const Key('entry-reply-field')), findsOneWidget);
     await finish(tester);
   });
 }

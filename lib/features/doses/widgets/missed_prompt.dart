@@ -67,7 +67,10 @@ class MissedPrompt extends ConsumerStatefulWidget {
 class _MissedPromptState extends ConsumerState<MissedPrompt> {
   /// Keys of the prompts hidden on this device
   final _hidden = <String>{};
-  final _checked = <String>{};
+
+  /// Keys whose stored choice has been read; nothing shows before that
+  final _loaded = <String>{};
+  final _loading = <String>{};
 
   String _key(MissedSlot m) => missedDismissKey(m.slot.id, m.date);
 
@@ -87,13 +90,19 @@ class _MissedPromptState extends ConsumerState<MissedPrompt> {
     final store = ref.read(missedDismissalsProvider);
     for (final m in widget.missed) {
       final key = _key(m);
-      if (!_checked.add(key)) {
+      if (_loaded.contains(key) || !_loading.add(key)) {
         continue;
       }
       final hidden = await store.isDismissed(m.slot.id, m.date);
-      if (hidden && mounted) {
-        setState(() => _hidden.add(key));
+      if (!mounted) {
+        return;
       }
+      setState(() {
+        _loaded.add(key);
+        if (hidden) {
+          _hidden.add(key);
+        }
+      });
     }
   }
 
@@ -126,7 +135,7 @@ class _MissedPromptState extends ConsumerState<MissedPrompt> {
     return Column(
       children: [
         for (final m in widget.missed)
-          if (!_hidden.contains(_key(m)))
+          if (_loaded.contains(_key(m)) && !_hidden.contains(_key(m)))
             Card(
               key: Key('missed-${m.slot.name}-${DateFormat('yyyy-MM-dd').format(m.date)}'),
               child: Padding(

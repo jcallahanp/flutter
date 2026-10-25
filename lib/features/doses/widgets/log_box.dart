@@ -20,6 +20,7 @@
  * Free-text log box on the Today screen, with an optional microphone.
  */
 
+import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:speech_to_text/speech_to_text.dart';
@@ -28,6 +29,10 @@ import 'package:wger/l10n/generated/app_localizations.dart';
 
 /// Speech recognition behind a seam, so widget tests need no platform channel.
 abstract class SpeechInput {
+  /// Whether the platform can plausibly do speech recognition. Answers
+  /// without asking for any permission; [initialize] may prompt.
+  bool get plausiblySupported;
+
   /// `false` when speech recognition is not available or not allowed.
   Future<bool> initialize();
 
@@ -40,6 +45,16 @@ abstract class SpeechInput {
 /// [SpeechInput] on the `speech_to_text` plugin.
 class PluginSpeechInput implements SpeechInput {
   final SpeechToText _speech = SpeechToText();
+
+  @override
+  bool get plausiblySupported =>
+      kIsWeb ||
+      const {
+        TargetPlatform.android,
+        TargetPlatform.iOS,
+        TargetPlatform.macOS,
+        TargetPlatform.windows,
+      }.contains(defaultTargetPlatform);
 
   @override
   Future<bool> initialize() async {
@@ -77,7 +92,8 @@ class LogBox extends ConsumerStatefulWidget {
 class _LogBoxState extends ConsumerState<LogBox> {
   final _controller = TextEditingController();
   late final SpeechInput _speech;
-  bool _micAvailable = false;
+  bool _micDenied = false;
+  bool _micReady = false;
   bool _listening = false;
   bool _sending = false;
   String _dictationBase = '';
@@ -87,11 +103,6 @@ class _LogBoxState extends ConsumerState<LogBox> {
     super.initState();
     _speech = ref.read(speechInputProvider);
     _controller.addListener(() => setState(() {}));
-    _speech.initialize().then((ok) {
-      if (mounted) {
-        setState(() => _micAvailable = ok);
-      }
-    });
   }
 
   @override
@@ -112,6 +123,9 @@ class _LogBoxState extends ConsumerState<LogBox> {
     }
     setState(() => _sending = true);
     try {
+      if (_listening) {
+        await _stopListening();
+      }
       await ref.read(doseRepositoryProvider).createRawEntry(text);
       _controller.clear();
     } finally {
@@ -121,33 +135,66 @@ class _LogBoxState extends ConsumerState<LogBox> {
     }
   }
 
-  Future<void> _toggleMic() async {
-    if (_listening) {
+  Future<void> _stopListening() async {
+    try {
       await _speech.stop();
+    } finally {
       if (mounted) {
         setState(() => _listening = false);
       }
+    }
+  }
+
+  Future<void> _toggleMic() async {
+    if (_listening) {
+      await _stopListening();
       return;
+    }
+    // Permission prompts come here, on the first tap, not when the screen opens
+    if (!_micReady) {
+      bool ok;
+      try {
+        ok = await _speech.initialize();
+      } catch (_) {
+        ok = false;
+      }
+      if (!mounted) {
+        return;
+      }
+      if (!ok) {
+        setState(() => _micDenied = true);
+        return;
+      }
+      _micReady = true;
     }
     _dictationBase = _controller.text.trim();
     setState(() => _listening = true);
-    await _speech.start(
-      (words) {
-        if (!mounted) {
-          return;
-        }
-        final text = [_dictationBase, words].where((s) => s.isNotEmpty).join(' ');
-        _controller.value = TextEditingValue(
-          text: text.length > rawEntryMaxLength ? text.substring(0, rawEntryMaxLength) : text,
-          selection: TextSelection.collapsed(offset: text.length.clamp(0, rawEntryMaxLength)),
-        );
-      },
-      onDone: () {
-        if (mounted) {
-          setState(() => _listening = false);
-        }
-      },
-    );
+    try {
+      await _speech.start(
+        (words) {
+          if (!mounted) {
+            return;
+          }
+          final text = [_dictationBase, words].where((s) => s.isNotEmpty).join(' ');
+          final capped = text.length > rawEntryMaxLength
+              ? text.substring(0, rawEntryMaxLength)
+              : text;
+          _controller.value = TextEditingValue(
+            text: capped,
+            selection: TextSelection.collapsed(offset: capped.length),
+          );
+        },
+        onDone: () {
+          if (mounted) {
+            setState(() => _listening = false);
+          }
+        },
+      );
+    } catch (_) {
+      if (mounted) {
+        setState(() => _listening = false);
+      }
+    }
   }
 
   @override
@@ -155,36 +202,43 @@ class _LogBoxState extends ConsumerState<LogBox> {
     final i18n = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: TextField(
-              key: const Key('log-box-field'),
-              controller: _controller,
-              maxLength: rawEntryMaxLength,
-              minLines: 1,
-              maxLines: 4,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: InputDecoration(
-                hintText: i18n.logBoxHint,
-                border: const OutlineInputBorder(),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: TextField(
+                  key: const Key('log-box-field'),
+                  controller: _controller,
+                  maxLength: rawEntryMaxLength,
+                  minLines: 1,
+                  maxLines: 4,
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: InputDecoration(
+                    hintText: i18n.logBoxHint,
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
               ),
-            ),
+              if (_speech.plausiblySupported && !_micDenied)
+                IconButton(
+                  key: const Key('log-box-mic'),
+                  icon: Icon(_listening ? Icons.mic : Icons.mic_none),
+                  tooltip: _listening ? i18n.logBoxListening : i18n.logBoxMic,
+                  onPressed: _toggleMic,
+                ),
+              IconButton(
+                key: const Key('log-box-send'),
+                icon: const Icon(Icons.send),
+                tooltip: i18n.logBoxSend,
+                onPressed: _canSend ? _send : null,
+              ),
+            ],
           ),
-          if (_micAvailable)
-            IconButton(
-              key: const Key('log-box-mic'),
-              icon: Icon(_listening ? Icons.mic : Icons.mic_none),
-              tooltip: _listening ? i18n.logBoxListening : i18n.logBoxMic,
-              onPressed: _toggleMic,
-            ),
-          IconButton(
-            key: const Key('log-box-send'),
-            icon: const Icon(Icons.send),
-            tooltip: i18n.logBoxSend,
-            onPressed: _canSend ? _send : null,
-          ),
+          if (_micDenied)
+            Text(i18n.logBoxMicUnavailable, key: const Key('log-box-mic-unavailable')),
         ],
       ),
     );

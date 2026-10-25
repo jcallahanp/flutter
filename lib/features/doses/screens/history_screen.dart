@@ -88,6 +88,10 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
             id: dose.id,
             status: Value(result.status),
             amount: Value(result.amount),
+            takenAt:
+                dose.takenAt == null && (result.status == 'taken' || result.status == 'partial')
+                ? Value(widget.clock())
+                : const Value.absent(),
             source: const Value('manual'),
           );
     }
@@ -124,11 +128,14 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       appBar: AppBar(
         title: Text(i18n.historyTitle),
         actions: [
-          TextButton.icon(
-            key: const Key('history-pick-day'),
-            icon: const Icon(Icons.calendar_today),
-            label: Text(DateFormat.yMMMEd(locale).format(_day)),
-            onPressed: _pickDay,
+          Tooltip(
+            message: i18n.historyPickDay,
+            child: TextButton.icon(
+              key: const Key('history-pick-day'),
+              icon: const Icon(Icons.calendar_today),
+              label: Text(DateFormat.yMMMEd(locale).format(_day)),
+              onPressed: _pickDay,
+            ),
           ),
         ],
       ),
@@ -216,6 +223,10 @@ class _EditDialogState extends State<_EditDialog> {
       _error = null;
       if (status == 'skipped' || status == 'missed') {
         _amount.text = '0';
+      } else if ((double.tryParse(_amount.text.trim().replaceAll(',', '.')) ?? 0) == 0) {
+        // Back from skipped or missed: start from the planned amount
+        final planned = widget.dose.plannedAmount;
+        _amount.text = planned == null ? '' : _plain(planned);
       }
     });
   }
@@ -229,6 +240,10 @@ class _EditDialogState extends State<_EditDialog> {
     }
     if ((_status == 'skipped' || _status == 'missed') && value != 0) {
       setState(() => _error = i18n.historyAmountZero);
+      return;
+    }
+    if ((_status == 'taken' || _status == 'partial') && value == 0) {
+      setState(() => _error = i18n.historyAmountPositive);
       return;
     }
     Navigator.pop(context, _Edit(_status, value));

@@ -1,3 +1,4 @@
+import 'package:drift/drift.dart' show Value;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -136,6 +137,41 @@ void main() {
     await settle(tester);
     expect(await tester.runAsync(() => repo.watchDosesOn(now).first), isEmpty);
     expect(find.text('No doses logged on this day'), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('taken needs an amount above 0 and sets the time when missing', (tester) async {
+    await pump(tester);
+    // a missed dose, edited to taken
+    await tester.runAsync(
+      () => repo.updateDose(
+        id: doseId,
+        status: const Value('missed'),
+        amount: const Value(0),
+        takenAt: const Value(null),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(Key('history-dose-$doseId')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('history-status-taken')));
+    await tester.pump();
+    // starts from the planned amount
+    expect(
+      tester.widget<TextField>(find.byKey(const Key('history-amount'))).controller!.text,
+      '500',
+    );
+    await tester.enterText(find.byKey(const Key('history-amount')), '0');
+    await tester.tap(find.byKey(const Key('history-save')));
+    await tester.pump();
+    expect(find.text('Must be above 0 for taken or partial'), findsOneWidget);
+
+    await tester.enterText(find.byKey(const Key('history-amount')), '500');
+    await tester.tap(find.byKey(const Key('history-save')));
+    await settle(tester);
+    final d = await dose(tester);
+    expect(d.status, 'taken');
+    expect(d.takenAt, isNotNull);
     await finish(tester);
   });
 }

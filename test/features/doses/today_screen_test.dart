@@ -1,3 +1,4 @@
+import 'package:drift/drift.dart' show Value;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -188,14 +189,17 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('mic inserts recognized words and is hidden when speech is unavailable', (
+  testWidgets('mic asks for nothing on open, inserts recognized words, stops on send', (
     tester,
   ) async {
     await tester.runAsync(seedEvening);
+    now = DateTime.now();
     await pump(tester);
+    expect(speech.initializeCalls, 0);
     await tester.enterText(find.byKey(const Key('log-box-field')), 'took');
     await tester.tap(find.byKey(const Key('log-box-mic')));
     await tester.pump();
+    expect(speech.initializeCalls, 1);
     expect(speech.listening, isTrue);
     speech.onWords!('metformin and a pill');
     await tester.pump();
@@ -203,15 +207,58 @@ void main() {
       tester.widget<TextField>(find.byKey(const Key('log-box-field'))).controller!.text,
       'took metformin and a pill',
     );
+    await tester.tap(find.byKey(const Key('log-box-send')));
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 300)));
+    await tester.pumpAndSettle();
+    expect(speech.listening, isFalse);
     await finish(tester);
+  });
 
+  testWidgets('mic denied hides the button and says why in one line', (tester) async {
     speech = FakeSpeech(available: false);
-    db = await openTestDatabase();
-    repo = DoseRepository(db, detectTimezone: () async => 'Europe/Berlin');
+    await tester.runAsync(seedEvening);
+    await pump(tester);
+    expect(find.byKey(const Key('log-box-mic')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('log-box-mic')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('log-box-mic')), findsNothing);
+    expect(find.text('Dictation is not available or not allowed on this device.'), findsOneWidget);
+    expect(find.byKey(const Key('log-box-send')), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('no mic where speech is not plausible', (tester) async {
+    speech = FakeSpeech(plausible: false);
     await tester.runAsync(seedEvening);
     await pump(tester);
     expect(find.byKey(const Key('log-box-mic')), findsNothing);
-    expect(find.byKey(const Key('log-box-send')), findsOneWidget);
+    expect(find.byKey(const Key('log-box-mic-unavailable')), findsNothing);
+    await finish(tester);
+  });
+
+  testWidgets('an earlier entry with a question still shows after midnight', (tester) async {
+    late String id;
+    await tester.runAsync(() async {
+      await seedEvening();
+      id = await repo.createRawEntry('took pills at 23:50');
+      await (db.update(db.rawEntryTable)..where((t) => t.id.equals(id))).write(
+        RawEntryTableCompanion(
+          state: const Value('needs_answer'),
+          createdOnDevice: Value(DateTime(2026, 10, 24, 23, 50).toUtc()),
+        ),
+      );
+      final old = await repo.createRawEntry('parsed long ago');
+      await (db.update(db.rawEntryTable)..where((t) => t.id.equals(old))).write(
+        RawEntryTableCompanion(
+          state: const Value('parsed'),
+          createdOnDevice: Value(DateTime(2026, 10, 24, 20).toUtc()),
+        ),
+      );
+    });
+    now = DateTime(2026, 10, 25, 0, 10);
+    await pump(tester);
+    expect(find.text('took pills at 23:50'), findsOneWidget);
+    expect(find.text('parsed long ago'), findsNothing);
     await finish(tester);
   });
 

@@ -22,9 +22,12 @@
  */
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:wger/core/formatting/formatting.dart';
+import 'package:wger/features/doses/logic/missed.dart';
 import 'package:wger/features/doses/models/dose_log.dart';
+import 'package:wger/features/doses/models/dose_slot.dart';
 import 'package:wger/features/doses/models/medication.dart';
 import 'package:wger/features/doses/models/parse_result.dart';
 import 'package:wger/features/doses/models/raw_entry.dart';
@@ -44,9 +47,11 @@ final _parseResultProvider = StreamProvider.autoDispose.family<ParseResult?, Str
 class EntryCard extends ConsumerStatefulWidget {
   final RawEntry entry;
 
-  /// The entries that answer this one
-  final List<RawEntry> replies;
+  /// The entries that answer each entry, by parent id; the card renders its
+  /// replies, and theirs, recursively
+  final Map<String, List<RawEntry>> repliesOf;
   final List<Medication> medications;
+  final List<DoseSlot> slots;
 
   /// The current time, for doses logged by a proposal
   final DateTime now;
@@ -54,8 +59,9 @@ class EntryCard extends ConsumerStatefulWidget {
   const EntryCard({
     super.key,
     required this.entry,
-    this.replies = const [],
+    this.repliesOf = const {},
     required this.medications,
+    this.slots = const [],
     required this.now,
   });
 
@@ -103,23 +109,25 @@ class _EntryCardState extends ConsumerState<EntryCard> {
     });
   }
 
-  Future<void> _markRestTaken(Map<String, dynamic> proposal) async {
-    final slotId = proposal['slot_id'];
-    final dateText = proposal['date'];
-    if (slotId is! String || dateText is! String) {
-      return;
-    }
-    final parsed = DateTime.tryParse(dateText);
+  /// The calendar day of a proposal's `date`, only from the last
+  /// [missedLookbackDays] days up to today: a parser slip must not write
+  /// into the future or far back.
+  DateTime? _proposalDate(Object? text) {
+    final parsed = text is String ? DateTime.tryParse(text) : null;
     if (parsed == null) {
-      return;
+      return null;
     }
+    final today = DateTime(widget.now.year, widget.now.month, widget.now.day);
     final date = DateTime(parsed.year, parsed.month, parsed.day);
-    await _run(
-      () => ref
-          .read(doseRepositoryProvider)
-          .logRestTaken(slotId: slotId, date: date, now: widget.now, rawEntryId: widget.entry.id),
-    );
+    final oldest = DateTime(today.year, today.month, today.day - missedLookbackDays);
+    return date.isBefore(oldest) || date.isAfter(today) ? null : date;
   }
+
+  Future<void> _markRestTaken(String slotId, DateTime date) => _run(
+    () => ref
+        .read(doseRepositoryProvider)
+        .logRestTaken(slotId: slotId, date: date, now: widget.now, rawEntryId: widget.entry.id),
+  );
 
   Future<void> _undo() async {
     final i18n = AppLocalizations.of(context);
@@ -159,9 +167,28 @@ class _EntryCardState extends ConsumerState<EntryCard> {
     final doses = ref.watch(_dosesOfEntryProvider(entry.id)).value ?? const <DoseLog>[];
     final result = ref.watch(_parseResultProvider(entry.id)).value;
     final question = entry.state == 'needs_answer' ? result?.question ?? '' : '';
-    final answered = widget.replies.isNotEmpty;
+    final replies = widget.repliesOf[entry.id] ?? const <RawEntry>[];
+    final answered = replies.isNotEmpty;
     final proposal = answered ? null : result?.proposal;
     final type = proposal?['type'];
+    // mark_rest_taken writes one_tap doses linked to this entry; once there,
+    // the proposal is done
+    final restDone = doses.any((d) => d.source == 'one_tap');
+    final restSlot = type == 'mark_rest_taken'
+        ? widget.slots.where((s) => s.id == proposal?['slot_id']).firstOrNull
+        : null;
+    final restDate = type == 'mark_rest_taken' ? _proposalDate(proposal?['date']) : null;
+    final locale = Localizations.localeOf(context).toString();
+    String dayLabel(DateTime d) {
+      final today = DateTime(widget.now.year, widget.now.month, widget.now.day);
+      if (d == today) {
+        return i18n.entryDayToday;
+      }
+      return d == DateTime(today.year, today.month, today.day - 1)
+          ? i18n.missedPromptYesterday
+          : DateFormat.MMMEd(locale).format(d);
+    }
+
     final names = {for (final m in widget.medications) m.id: m.name};
 
     return Card(
@@ -188,13 +215,13 @@ class _EntryCardState extends ConsumerState<EntryCard> {
             if (question.isNotEmpty && !answered) ...[
               const SizedBox(height: 8),
               Text(question, key: const Key('entry-question')),
-              if (type == 'mark_rest_taken')
+              if (restSlot != null && restDate != null && !restDone)
                 Align(
                   alignment: Alignment.centerLeft,
                   child: OutlinedButton(
                     key: const Key('entry-mark-rest-taken'),
-                    onPressed: _busy ? null : () => _markRestTaken(proposal!),
-                    child: Text(i18n.entryMarkRestTaken),
+                    onPressed: _busy ? null : () => _markRestTaken(restSlot.id, restDate),
+                    child: Text(i18n.entryMarkRestTaken(restSlot.name, dayLabel(restDate))),
                   ),
                 ),
               if (type == 'add_medication')
@@ -236,12 +263,14 @@ class _EntryCardState extends ConsumerState<EntryCard> {
                   child: Text(i18n.entryUndo),
                 ),
               ),
-            for (final reply in widget.replies)
+            for (final reply in replies)
               Padding(
                 padding: const EdgeInsets.only(left: 16),
                 child: EntryCard(
                   entry: reply,
+                  repliesOf: widget.repliesOf,
                   medications: widget.medications,
+                  slots: widget.slots,
                   now: widget.now,
                 ),
               ),

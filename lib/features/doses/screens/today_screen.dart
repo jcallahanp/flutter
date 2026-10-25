@@ -54,9 +54,6 @@ final _regimenOnProvider = StreamProvider.autoDispose.family<List<Regimen>, Date
 final _dosesOnProvider = StreamProvider.autoDispose.family<List<DoseLog>, DateTime>(
   (ref, day) => ref.watch(doseRepositoryProvider).watchDosesOn(day),
 );
-final _rawEntriesOnProvider = StreamProvider.autoDispose.family<List<RawEntry>, DateTime>(
-  (ref, day) => ref.watch(doseRepositoryProvider).watchRawEntriesOn(day),
-);
 final _recentRegimenProvider = StreamProvider.autoDispose.family<List<Regimen>, DateTime>(
   (ref, today) => ref
       .watch(doseRepositoryProvider)
@@ -132,7 +129,6 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
     final regimenYesterday = ref.watch(_regimenOnProvider(yesterday)).value;
     final dosesToday = ref.watch(_dosesOnProvider(today)).value;
     final dosesYesterday = ref.watch(_dosesOnProvider(yesterday)).value;
-    final entries = ref.watch(_rawEntriesOnProvider(today)).value;
     final recentRegimen = ref.watch(_recentRegimenProvider(today)).value;
     final recentDoses = ref.watch(_recentDosesProvider(today)).value;
     final recentEntries = ref.watch(_recentEntriesProvider(today)).value;
@@ -144,7 +140,6 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
         regimenYesterday != null &&
         dosesToday != null &&
         dosesYesterday != null &&
-        entries != null &&
         recentRegimen != null &&
         recentDoses != null &&
         recentEntries != null;
@@ -168,31 +163,44 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
         doses: recentDoses,
         entries: recentEntries,
       );
-      final ids = {for (final e in entries) e.id};
-      final topLevel = entries.where((e) => e.parentId == null || !ids.contains(e.parentId));
-      body = ListView(
-        padding: const EdgeInsets.all(8),
+      final repliesOf = <String, List<RawEntry>>{};
+      for (final e in recentEntries) {
+        if (e.parentId != null) {
+          (repliesOf[e.parentId!] ??= []).add(e);
+        }
+      }
+      final roots = _visibleRoots(recentEntries, repliesOf, today);
+      body = Column(
         children: [
+          // Outside the list so a half-typed text survives scrolling
           const LogBox(),
-          MissedPrompt(missed: missed, today: today),
-          for (final slot in slots)
-            _SlotCard(
-              slot: slot,
-              now: now,
-              regimen: regimen,
-              medications: meds,
-              logged: logged,
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.all(8),
+              children: [
+                MissedPrompt(missed: missed, today: today),
+                for (final slot in slots)
+                  _SlotCard(
+                    slot: slot,
+                    now: now,
+                    regimen: regimen,
+                    medications: meds,
+                    logged: logged,
+                  ),
+                for (final e in roots)
+                  EntryCard(
+                    entry: e,
+                    repliesOf: repliesOf,
+                    medications: meds,
+                    slots: slots,
+                    now: now,
+                  ),
+                _SectionTitle(i18n.todayLoggedTitle),
+                if (dosesToday.isEmpty) ListTile(title: Text(i18n.todayNothingLogged)),
+                for (final dose in dosesToday) _DoseTile(dose: dose, medications: meds),
+              ],
             ),
-          for (final e in topLevel)
-            EntryCard(
-              entry: e,
-              replies: entries.where((r) => r.parentId == e.id).toList(),
-              medications: meds,
-              now: now,
-            ),
-          _SectionTitle(i18n.todayLoggedTitle),
-          if (dosesToday.isEmpty) ListTile(title: Text(i18n.todayNothingLogged)),
-          for (final dose in dosesToday) _DoseTile(dose: dose, medications: meds),
+          ),
         ],
       );
     }
@@ -220,6 +228,33 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
       body: WidescreenWrapper(child: body),
     );
   }
+}
+
+const _openStates = {'pending', 'no_key', 'needs_answer'};
+
+/// The entries Today lists, oldest first: those of today, and earlier ones
+/// still waiting (pending, no key, or with a question) so they do not vanish
+/// at midnight. A thread shows when any entry in it qualifies; replies show
+/// under their parent, at any depth.
+List<RawEntry> _visibleRoots(
+  List<RawEntry> entries,
+  Map<String, List<RawEntry>> repliesOf,
+  DateTime today,
+) {
+  bool qualifies(RawEntry e) {
+    final local = e.createdOnDevice.toLocal();
+    return DateTime(local.year, local.month, local.day) == today || _openStates.contains(e.state);
+  }
+
+  bool threadQualifies(RawEntry e, Set<String> seen) =>
+      seen.add(e.id) &&
+      (qualifies(e) || (repliesOf[e.id] ?? const []).any((r) => threadQualifies(r, seen)));
+
+  final ids = {for (final e in entries) e.id};
+  return [
+    for (final e in entries)
+      if ((e.parentId == null || !ids.contains(e.parentId)) && threadQualifies(e, {})) e,
+  ];
 }
 
 void _openRoutine(BuildContext context) {
