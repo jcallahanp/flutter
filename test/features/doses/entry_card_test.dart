@@ -64,6 +64,7 @@ void main() {
       }
     }
     final slots = (await tester.runAsync(() => repo.watchSlots().first))!;
+    meds ??= (await tester.runAsync(() => repo.watchMedications().first))!;
     await tester.pumpWidget(
       ProviderScope(
         overrides: [doseRepositoryProvider.overrideWithValue(repo)],
@@ -76,7 +77,7 @@ void main() {
                 entry: entry,
                 repliesOf: repliesOf,
                 slots: slots,
-                medications: meds ?? const [],
+                medications: meds,
                 now: now,
               ),
             ),
@@ -84,8 +85,11 @@ void main() {
         ),
       ),
     );
-    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
-    await tester.pumpAndSettle();
+    // twice: the providers of the proposal's day start after the first frame
+    for (var i = 0; i < 2; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
+      await tester.pumpAndSettle();
+    }
   }
 
   Future<void> settle(WidgetTester tester) async {
@@ -285,10 +289,9 @@ void main() {
     for (final date in ['2026-10-26', '2026-10-17', '2026-10-10', 'garbage', '']) {
       late String id;
       await tester.runAsync(() async {
-        final ids = await repo.watchSlots().first.then((l) => l.isEmpty ? null : l.first.id);
-        final slot =
-            ids ??
-            await repo.saveSlot(name: 'Evening', usualTime: const TimeOfDay(hour: 21, minute: 0));
+        final slot = (await repo.watchSlots().first).isEmpty
+            ? (await seedRoutine()).slot
+            : (await repo.watchSlots().first).first.id;
         id = await repo.createRawEntry('entry $date');
         await setState(id, 'needs_answer');
         await parseResult(
@@ -364,6 +367,37 @@ void main() {
     expect(find.text('How many?'), findsNothing);
     expect(find.text('Since when?'), findsOneWidget);
     expect(find.byKey(const Key('entry-reply-field')), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('no mark-rest button once every item of the slot has a dose that day', (
+    tester,
+  ) async {
+    late String id;
+    await tester.runAsync(() async {
+      final ids = await seedRoutine();
+      for (final (med, regimen) in [(ids.a, ids.ra), (ids.b, ids.rb)]) {
+        await repo.logDose(
+          medicationId: med,
+          regimenId: regimen,
+          date: DateTime(2026, 10, 24),
+          amount: 1,
+          unit: 'tablet',
+          status: 'taken',
+          source: 'manual',
+        );
+      }
+      id = await repo.createRawEntry('both taken');
+      await setState(id, 'needs_answer');
+      await parseResult(
+        id,
+        question: 'Mark the rest?',
+        proposal: {'type': 'mark_rest_taken', 'slot_id': ids.slot, 'date': '2026-10-24'},
+      );
+    });
+    await pump(tester, id);
+    expect(find.text('Mark the rest?'), findsOneWidget);
+    expect(find.byKey(const Key('entry-mark-rest-taken')), findsNothing);
     await finish(tester);
   });
 }

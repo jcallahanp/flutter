@@ -124,4 +124,22 @@ void main() {
     final b = result.where((m) => m.items.any((r) => r.id == 'r-b')).map((m) => m.date);
     expect(b, [DateTime(2026, 10, 23), DateTime(2026, 10, 24)]);
   });
+
+  test('carry_over_hours_leave_out_yesterday', () {
+    List<MissedSlot> at(DateTime now) => missedSlots(
+      today: DateTime(now.year, now.month, now.day),
+      slots: [evening],
+      regimen: regimen,
+      medications: meds,
+      doses: const [],
+      entries: const [],
+      now: now,
+    );
+    // between 00:00 and 04:00 yesterday's evening is still the current slot
+    final night = at(DateTime(2026, 10, 25, 0, 40));
+    expect(night.any((m) => m.date == DateTime(2026, 10, 24)), isFalse);
+    expect(night.last.date, DateTime(2026, 10, 23));
+    // from 04:00 it is a past day
+    expect(at(DateTime(2026, 10, 25, 4)).last.date, DateTime(2026, 10, 24));
+  });
 }

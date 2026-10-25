@@ -27,6 +27,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:wger/core/formatting/formatting.dart';
 import 'package:wger/core/wide_screen_wrapper.dart';
+import 'package:wger/database/powersync/powersync.dart' show syncStatus;
 import 'package:wger/features/doses/logic/missed.dart';
 import 'package:wger/features/doses/logic/one_tap.dart';
 import 'package:wger/features/doses/models/dose_log.dart';
@@ -162,6 +163,7 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
         medications: meds,
         doses: recentDoses,
         entries: recentEntries,
+        now: now,
       );
       final repliesOf = <String, List<RawEntry>>{};
       for (final e in recentEntries) {
@@ -178,7 +180,9 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
             child: ListView(
               padding: const EdgeInsets.all(8),
               children: [
-                MissedPrompt(missed: missed, today: today),
+                // Not before the first sync: a fresh install has nothing to compare with
+                if (ref.watch(syncStatus).hasSynced == true)
+                  MissedPrompt(missed: missed, today: today),
                 for (final slot in slots)
                   _SlotCard(
                     slot: slot,
@@ -354,6 +358,7 @@ class _SlotCardState extends ConsumerState<_SlotCard> {
           unit: d.unit,
           status: d.status,
           source: d.source,
+          onlyIfAbsent: true,
         );
       }
     } finally {

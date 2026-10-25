@@ -236,4 +236,18 @@ void main() {
     );
     await finish(tester);
   });
+
+  testWidgets('refuses NaN, Infinity and oversized amounts', (tester) async {
+    await pump(tester);
+    await tester.tap(find.byKey(Key('history-dose-$doseId')));
+    await tester.pumpAndSettle();
+    for (final bad in ['NaN', 'Infinity', '1e400', '10000000']) {
+      await tester.enterText(find.byKey(const Key('history-amount')), bad);
+      await tester.tap(find.byKey(const Key('history-save')));
+      await tester.pump();
+      expect(find.text('Enter 0 or more'), findsOneWidget, reason: bad);
+    }
+    expect((await dose(tester)).amount, 500);
+    await finish(tester);
+  });
 }

@@ -24,6 +24,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:wger/core/error_dialogs.dart';
 import 'package:wger/features/doses/logic/missed.dart';
 import 'package:wger/features/doses/providers/dose_repository.dart';
 import 'package:wger/l10n/generated/app_localizations.dart';
@@ -113,23 +114,37 @@ class _MissedPromptState extends ConsumerState<MissedPrompt> {
 
   Future<void> _yes(MissedSlot m) async {
     final repo = ref.read(doseRepositoryProvider);
-    for (final item in m.items) {
-      await repo.logDose(
-        medicationId: item.medicationId,
-        regimenId: item.id,
-        date: m.date,
-        plannedAmount: item.amount,
-        amount: 0,
-        unit: item.unit,
-        status: 'missed',
-        source: 'missed_prompt',
-      );
+    try {
+      for (final item in m.items) {
+        await repo.logDose(
+          medicationId: item.medicationId,
+          regimenId: item.id,
+          date: m.date,
+          plannedAmount: item.amount,
+          amount: 0,
+          unit: item.unit,
+          status: 'missed',
+          source: 'missed_prompt',
+          onlyIfAbsent: true,
+        );
+      }
+    } catch (e, st) {
+      if (mounted) {
+        showGeneralErrorDialog(e, st, context: context);
+      }
     }
   }
 
   Future<void> _notNow(MissedSlot m) async {
     setState(() => _hidden.add(_key(m)));
-    await ref.read(missedDismissalsProvider).dismiss(m.slot.id, m.date);
+    try {
+      await ref.read(missedDismissalsProvider).dismiss(m.slot.id, m.date);
+    } catch (e, st) {
+      // Hidden for this session; it asks again next time
+      if (mounted) {
+        showGeneralErrorDialog(e, st, context: context);
+      }
+    }
   }
 
   @override

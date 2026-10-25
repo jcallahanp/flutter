@@ -2084,7 +2084,7 @@
   "@entryUndo": { "description": "Button that removes the doses an entry created" },
   "entryUndoTitle": "Undo this entry?",
   "@entryUndoTitle": { "description": "Title of the dialog that confirms removing the doses of an entry" },
-  "entryUndoBody": "The doses it logged are removed. Your text is kept.",
+  "entryUndoBody": "The doses it logged or changed are removed. Your text is kept.",
   "@entryUndoBody": { "description": "Body of the dialog that confirms removing the doses of an entry" },
   "historyTitle": "History",
   "@historyTitle": { "description": "Title of the screen listing the doses of a chosen day" },

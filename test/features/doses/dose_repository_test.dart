@@ -518,8 +518,92 @@ void main() {
     );
     expect(added.rawEntryId, entry);
     expect(doses.singleWhere((d) => d.medicationId == ids.med).status, 'skipped');
+    // a past day is stamped with the slot's usual time (08:00), not the call time
+    expect(added.takenAt!.toLocal(), DateTime(2026, 10, 24, 8));
 
     await repo.logRestTaken(slotId: 'unknown', date: day, now: DateTime(2026, 10, 25));
     expect(await repo.watchDosesOn(day).first, hasLength(2));
+  });
+
+  test('parseDoseAmount refuses what the server cannot store', () {
+    expect(parseDoseAmount(' 1,5 '), 1.5);
+    expect(parseDoseAmount('0'), 0);
+    expect(parseDoseAmount('0.12345'), 0.123);
+    expect(parseDoseAmount('9999999.999'), 9999999.999);
+    for (final bad in ['NaN', 'Infinity', '-Infinity', '1e400', '1e7', '10000000', 'abc', '']) {
+      expect(parseDoseAmount(bad), isNull, reason: bad);
+    }
+  });
+
+  test('the repository refuses non-finite and oversized amounts', () async {
+    final ids = await medAndSlot();
+    for (final bad in [double.nan, double.infinity, 1e7]) {
+      await expectLater(
+        repo.logDose(
+          medicationId: ids.med,
+          date: DateTime(2026, 10, 25),
+          amount: bad,
+          unit: 'mg',
+          status: 'taken',
+          source: 'manual',
+        ),
+        throwsArgumentError,
+        reason: '$bad',
+      );
+      await expectLater(
+        repo.saveRegimen(
+          medicationId: ids.med,
+          slotId: ids.slot,
+          amount: bad,
+          unit: 'mg',
+          startDate: DateTime(2026, 1, 1),
+        ),
+        throwsArgumentError,
+      );
+      await expectLater(
+        repo.saveMedication(name: 'X', strength: bad, unit: 'mg'),
+        throwsArgumentError,
+      );
+    }
+    expect(await repo.watchDosesOn(DateTime(2026, 10, 25)).first, isEmpty);
+  });
+
+  test('entry length counts code points like the server', () async {
+    expect(await repo.createRawEntry('😀' * 2000), isNotEmpty);
+    await expectLater(repo.createRawEntry('😀' * 2001), throwsArgumentError);
+    final cut = truncateToEntryLimit('a${'😀' * 2500}');
+    expect(cut.runes.length, 2000);
+    expect(cut.runes.last, '😀'.runes.first);
+  });
+
+  test('logDose onlyIfAbsent keeps an existing row, an explicit log updates it', () async {
+    final ids = await medAndSlot();
+    final regimen = await repo.saveRegimen(
+      medicationId: ids.med,
+      slotId: ids.slot,
+      amount: 2,
+      unit: 'tablet',
+      startDate: DateTime(2026, 1, 1),
+    );
+    final day = DateTime(2026, 10, 25);
+    Future<String> log(String status, double amount, {bool onlyIfAbsent = false}) => repo.logDose(
+      medicationId: ids.med,
+      regimenId: regimen,
+      date: day,
+      amount: amount,
+      unit: 'tablet',
+      status: status,
+      source: 'manual',
+      onlyIfAbsent: onlyIfAbsent,
+    );
+    final first = await log('partial', 1);
+    expect(await log('taken', 2, onlyIfAbsent: true), first);
+    var doses = await repo.watchDosesOn(day).first;
+    expect(doses.single.status, 'partial');
+    expect(doses.single.amount, 1);
+
+    await log('taken', 2);
+    doses = await repo.watchDosesOn(day).first;
+    expect(doses.single.status, 'taken');
   });
 }

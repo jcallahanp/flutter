@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:wger/database/powersync/database.dart';
+import 'package:wger/database/powersync/powersync.dart' show syncStatus;
 import 'package:wger/features/doses/providers/dose_repository.dart';
 import 'package:wger/features/doses/screens/today_screen.dart';
 import 'package:wger/features/doses/widgets/entry_card.dart';
@@ -12,6 +13,7 @@ import 'package:wger/l10n/generated/app_localizations.dart';
 import 'package:wger/l10n/localizations_delegates.dart';
 
 import '../../helpers/in_memory_drift.dart';
+import '../../helpers/sync_status.dart';
 import 'fakes.dart';
 
 void main() {
@@ -20,11 +22,13 @@ void main() {
   var now = DateTime(2026, 10, 25, 12, 0);
   var speech = FakeSpeech();
   var dismissals = FakeDismissals();
+  var synced = true;
 
   setUp(() async {
     now = DateTime(2026, 10, 25, 12, 0);
     speech = FakeSpeech();
     dismissals = FakeDismissals();
+    synced = true;
     db = await openTestDatabase();
     repo = DoseRepository(db, detectTimezone: () async => 'Europe/Berlin');
   });
@@ -39,6 +43,9 @@ void main() {
           doseRepositoryProvider.overrideWithValue(repo),
           speechInputProvider.overrideWithValue(speech),
           missedDismissalsProvider.overrideWithValue(dismissals),
+          syncStatus.overrideWithValue(
+            buildSyncStatus(lastSyncedAt: synced ? DateTime.utc(2026, 10, 25) : null),
+          ),
         ],
         child: MaterialApp(
           localizationsDelegates: appLocalizationsDelegates,
@@ -313,6 +320,47 @@ void main() {
     });
     await pump(tester);
     expect(find.text('No Evening meds logged yesterday. Mark as missed?'), findsOneWidget);
+    await finish(tester);
+  });
+
+  Future<void> seedQuietEveningUntil23() async {
+    await seedEvening();
+    final meds = await repo.watchMedications().first;
+    final regimen = (await repo.watchOpenRegimens().first).single;
+    for (var d = 17; d <= 23; d++) {
+      await repo.logDose(
+        medicationId: meds.single.id,
+        regimenId: regimen.id,
+        date: DateTime(2026, 10, d),
+        amount: 1,
+        unit: 'tablet',
+        status: 'taken',
+        source: 'manual',
+      );
+    }
+  }
+
+  testWidgets('at 00:40 yesterday evening is for one-tap, not for the missed prompt', (
+    tester,
+  ) async {
+    now = DateTime(2026, 10, 25, 0, 40);
+    await tester.runAsync(seedQuietEveningUntil23);
+    await pump(tester);
+    expect(find.textContaining('Mark as missed?'), findsNothing);
+    expect(find.text('Yesterday · Evening'), findsOneWidget);
+    expect(
+      tester.widget<FilledButton>(find.byKey(const Key('took-as-planned-Evening'))).onPressed,
+      isNotNull,
+    );
+    await finish(tester);
+  });
+
+  testWidgets('no missed prompt before the first sync', (tester) async {
+    synced = false;
+    await tester.runAsync(seedQuietEveningUntil23);
+    // the 24th is open; synced it would ask
+    await pump(tester);
+    expect(find.textContaining('Mark as missed?'), findsNothing);
     await finish(tester);
   });
 

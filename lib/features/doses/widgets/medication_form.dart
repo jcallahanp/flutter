@@ -109,6 +109,8 @@ class _PlacementFields extends StatelessWidget {
             value: amount,
             labelText: i18n.amount,
             isRequired: true,
+            min: 0,
+            max: 9999999.999,
             onChanged: onAmountChanged,
           ),
           if (error != null)
@@ -215,6 +217,7 @@ class _MedicationFormState extends ConsumerState<MedicationForm> {
             value: _strength,
             labelText: i18n.routineStrength,
             min: 0,
+            max: 9999999.999,
             onChanged: (value) => _strength = value,
           ),
           TextFormField(

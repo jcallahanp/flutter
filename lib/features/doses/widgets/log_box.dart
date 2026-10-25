@@ -24,6 +24,7 @@ import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatf
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:speech_to_text/speech_to_text.dart';
+import 'package:wger/core/error_dialogs.dart';
 import 'package:wger/features/doses/providers/dose_repository.dart';
 import 'package:wger/l10n/generated/app_localizations.dart';
 
@@ -128,6 +129,11 @@ class _LogBoxState extends ConsumerState<LogBox> {
       }
       await ref.read(doseRepositoryProvider).createRawEntry(text);
       _controller.clear();
+    } catch (e, st) {
+      // Text over the server's limit stays in the box, with the reason shown
+      if (mounted) {
+        showGeneralErrorDialog(e, st, context: context);
+      }
     } finally {
       if (mounted) {
         setState(() => _sending = false);
@@ -177,9 +183,7 @@ class _LogBoxState extends ConsumerState<LogBox> {
             return;
           }
           final text = [_dictationBase, words].where((s) => s.isNotEmpty).join(' ');
-          final capped = text.length > rawEntryMaxLength
-              ? text.substring(0, rawEntryMaxLength)
-              : text;
+          final capped = truncateToEntryLimit(text);
           _controller.value = TextEditingValue(
             text: capped,
             selection: TextSelection.collapsed(offset: capped.length),

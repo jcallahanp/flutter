@@ -39,6 +39,32 @@ import 'package:wger/features/doses/models/regimen.dart';
 /// Longest free text the server accepts.
 const rawEntryMaxLength = 2000;
 
+/// The largest amount the server stores (10 digits, 3 of them decimals).
+const maxDoseAmount = 10000000;
+
+/// [text] as a dose amount (a comma counts as the decimal point), rounded to
+/// the 3 places the server keeps. `null` for anything that is not a plain
+/// finite number below [maxDoseAmount]: NaN, Infinity and 1e400 would break
+/// reads or block the upload queue.
+double? parseDoseAmount(String text) {
+  final value = double.tryParse(text.trim().replaceAll(',', '.'));
+  if (value == null || !value.isFinite || value.abs() >= maxDoseAmount) {
+    return null;
+  }
+  return (value * 1000).round() / 1000;
+}
+
+void _checkAmount(String name, double? value) {
+  if (value != null && (!value.isFinite || value.abs() >= maxDoseAmount)) {
+    throw ArgumentError.value(value, name, 'Not an amount the server can store');
+  }
+}
+
+/// [text] cut to at most [rawEntryMaxLength] code points; a surrogate pair is
+/// never split.
+String truncateToEntryLimit(String text) =>
+    String.fromCharCodes(text.runes.take(rawEntryMaxLength));
+
 final doseRepositoryProvider = Provider<DoseRepository>((ref) {
   final db = ref.read(driftPowerSyncDatabase);
   return DoseRepository(db);
@@ -233,6 +259,7 @@ class DoseRepository {
     String kind = 'routine',
     bool active = true,
   }) async {
+    _checkAmount('strength', strength);
     final newId = id ?? ps.uuid.v7();
     final companion = MedicationTableCompanion(
       id: Value(newId),
@@ -294,6 +321,7 @@ class DoseRepository {
     required DateTime startDate,
     DateTime? endDate,
   }) async {
+    _checkAmount('amount', amount);
     if (endDate == null) {
       final open =
           await (_db.select(_db.regimenTable)..where(
@@ -327,6 +355,9 @@ class DoseRepository {
     return newId;
   }
 
+  /// Logs a dose. A second log for one (regimen, date) updates the existing
+  /// row (an explicit edit), or with [onlyIfAbsent] leaves it as it is and
+  /// returns its id (one-tap, missed prompt, proposals).
   Future<String> logDose({
     required String medicationId,
     String? regimenId,
@@ -339,7 +370,10 @@ class DoseRepository {
     required String source,
     String? rawEntryId,
     String note = '',
+    bool onlyIfAbsent = false,
   }) async {
+    _checkAmount('amount', amount);
+    _checkAmount('plannedAmount', plannedAmount);
     final companion = _doseCompanion(
       id: ps.uuid.v7(),
       medicationId: medicationId,
@@ -365,6 +399,9 @@ class DoseRepository {
                   ..where((t) => t.regimenId.equals(regimenId) & t.date.equals(_dayText(date)))
                   ..limit(1))
                 .getSingleOrNull();
+        if (existing != null && onlyIfAbsent) {
+          return existing.id;
+        }
         if (existing != null) {
           await (_db.update(_db.doseLogTable)..where((t) => t.id.equals(existing.id))).write(
             companion.copyWith(id: const Value.absent()),
@@ -378,7 +415,8 @@ class DoseRepository {
   }
 
   /// Logs as taken, at the planned amount, the items of the slot [slotId] that
-  /// have no dose on [date] yet (the one-tap logic), linked to [rawEntryId] so
+  /// have no dose on [date] yet (the one-tap logic; a day past is stamped
+  /// with the slot's usual time, today with [now]), linked to [rawEntryId] so
   /// Undo can remove them. Does nothing for an unknown slot.
   Future<void> logRestTaken({
     required String slotId,
@@ -415,13 +453,14 @@ class DoseRepository {
         medicationId: d.medicationId,
         regimenId: d.regimenId,
         date: d.date,
-        takenAt: d.takenAt,
+        takenAt: defaultTakenAt(date: date, now: now, usualTime: slot.usualTime),
         plannedAmount: d.plannedAmount,
         amount: d.amount,
         unit: d.unit,
         status: d.status,
         source: d.source,
         rawEntryId: rawEntryId,
+        onlyIfAbsent: true,
       );
     }
   }
@@ -457,6 +496,8 @@ class DoseRepository {
     Value<String?> rawEntryId = const Value.absent(),
     Value<String> note = const Value.absent(),
   }) async {
+    _checkAmount('amount', amount.present ? amount.value : null);
+    _checkAmount('plannedAmount', plannedAmount.present ? plannedAmount.value : null);
     final companion = DoseLogTableCompanion(
       medicationId: medicationId,
       regimenId: regimenId,
@@ -490,9 +531,10 @@ class DoseRepository {
     if (text.trim().isEmpty) {
       throw ArgumentError.value(text, 'text', 'An entry cannot be empty');
     }
-    if (text.length > rawEntryMaxLength) {
+    // The server counts code points
+    if (text.runes.length > rawEntryMaxLength) {
       throw ArgumentError.value(
-        text.length,
+        text.runes.length,
         'text',
         'Entries are limited to $rawEntryMaxLength characters',
       );

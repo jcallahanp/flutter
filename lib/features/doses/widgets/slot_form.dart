@@ -19,6 +19,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:wger/core/consts.dart';
+import 'package:wger/core/error_dialogs.dart';
 import 'package:wger/core/widgets/form_submit_button.dart';
 import 'package:wger/features/doses/models/dose_slot.dart';
 import 'package:wger/features/doses/providers/dose_repository.dart';
@@ -150,14 +151,21 @@ class _SlotFormState extends ConsumerState<SlotForm> {
                   if (!_form.currentState!.validate()) {
                     return;
                   }
-                  await ref
-                      .read(doseRepositoryProvider)
-                      .saveSlot(
-                        id: widget.slot?.id,
-                        name: _name.text.trim(),
-                        usualTime: parseSlotTime(_time.text)!,
-                        order: int.parse(_order.text),
-                      );
+                  try {
+                    await ref
+                        .read(doseRepositoryProvider)
+                        .saveSlot(
+                          id: widget.slot?.id,
+                          name: _name.text.trim(),
+                          usualTime: parseSlotTime(_time.text)!,
+                          order: int.parse(_order.text),
+                        );
+                  } catch (e, st) {
+                    if (context.mounted) {
+                      showGeneralErrorDialog(e, st, context: context);
+                    }
+                    return;
+                  }
                   if (context.mounted) {
                     Navigator.of(context).pop();
                   }

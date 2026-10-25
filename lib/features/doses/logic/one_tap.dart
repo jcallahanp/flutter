@@ -20,6 +20,7 @@
  * Pure logic of the one-tap "took as planned" action. No database, no clock.
  */
 
+import 'package:material_ui/material_ui.dart' show TimeOfDay;
 import 'package:wger/features/doses/models/dose_log.dart';
 import 'package:wger/features/doses/models/dose_slot.dart';
 import 'package:wger/features/doses/models/medication.dart';
@@ -173,4 +174,15 @@ DateTime defaultSlotDate(
     return yesterday;
   }
   return today;
+}
+
+/// When a dose without a recorded time was taken: [now] for today, else
+/// [date] at the slot's [usualTime] (noon without a slot). One rule for the
+/// history edit and for doses logged by a proposal.
+DateTime defaultTakenAt({required DateTime date, required DateTime now, TimeOfDay? usualTime}) {
+  final day = DateTime(date.year, date.month, date.day);
+  if (day == _day(now)) {
+    return now;
+  }
+  return DateTime(day.year, day.month, day.day, usualTime?.hour ?? 12, usualTime?.minute ?? 0);
 }

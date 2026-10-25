@@ -24,13 +24,16 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:wger/core/error_dialogs.dart';
 import 'package:wger/core/formatting/formatting.dart';
 import 'package:wger/features/doses/logic/missed.dart';
+import 'package:wger/features/doses/logic/one_tap.dart';
 import 'package:wger/features/doses/models/dose_log.dart';
 import 'package:wger/features/doses/models/dose_slot.dart';
 import 'package:wger/features/doses/models/medication.dart';
 import 'package:wger/features/doses/models/parse_result.dart';
 import 'package:wger/features/doses/models/raw_entry.dart';
+import 'package:wger/features/doses/models/regimen.dart';
 import 'package:wger/features/doses/providers/dose_repository.dart';
 import 'package:wger/l10n/generated/app_localizations.dart';
 
@@ -39,6 +42,12 @@ const addMedicationReply = 'yes, add it as an as-needed med';
 
 final _dosesOfEntryProvider = StreamProvider.autoDispose.family<List<DoseLog>, String>(
   (ref, id) => ref.watch(doseRepositoryProvider).watchDosesOfEntry(id),
+);
+final _regimenOnProvider = StreamProvider.autoDispose.family<List<Regimen>, DateTime>(
+  (ref, day) => ref.watch(doseRepositoryProvider).watchRegimenOn(day),
+);
+final _dosesOnProvider = StreamProvider.autoDispose.family<List<DoseLog>, DateTime>(
+  (ref, day) => ref.watch(doseRepositoryProvider).watchDosesOn(day),
 );
 final _parseResultProvider = StreamProvider.autoDispose.family<ParseResult?, String>(
   (ref, id) => ref.watch(doseRepositoryProvider).watchParseResultFor(id),
@@ -104,8 +113,16 @@ class _EntryCardState extends ConsumerState<EntryCard> {
       return;
     }
     await _run(() async {
-      await ref.read(doseRepositoryProvider).createRawEntry(text.trim(), parentId: widget.entry.id);
-      _reply.clear();
+      try {
+        await ref
+            .read(doseRepositoryProvider)
+            .createRawEntry(text.trim(), parentId: widget.entry.id);
+        _reply.clear();
+      } catch (e, st) {
+        if (mounted) {
+          showGeneralErrorDialog(e, st, context: context);
+        }
+      }
     });
   }
 
@@ -178,6 +195,25 @@ class _EntryCardState extends ConsumerState<EntryCard> {
         ? widget.slots.where((s) => s.id == proposal?['slot_id']).firstOrNull
         : null;
     final restDate = type == 'mark_rest_taken' ? _proposalDate(proposal?['date']) : null;
+    // Nothing to offer once every item of the slot has a dose that day
+    final restLogged = restSlot != null && restDate != null
+        ? ref.watch(_dosesOnProvider(restDate)).value
+        : null;
+    final restRegimen = restSlot != null && restDate != null
+        ? ref.watch(_regimenOnProvider(restDate)).value
+        : null;
+    final restOpen =
+        restSlot != null &&
+        restDate != null &&
+        restLogged != null &&
+        restRegimen != null &&
+        unloggedItems(
+          slot: restSlot,
+          date: restDate,
+          regimen: restRegimen,
+          medications: widget.medications,
+          logged: restLogged,
+        ).isNotEmpty;
     final locale = Localizations.localeOf(context).toString();
     String dayLabel(DateTime d) {
       final today = DateTime(widget.now.year, widget.now.month, widget.now.day);
@@ -215,7 +251,7 @@ class _EntryCardState extends ConsumerState<EntryCard> {
             if (question.isNotEmpty && !answered) ...[
               const SizedBox(height: 8),
               Text(question, key: const Key('entry-question')),
-              if (restSlot != null && restDate != null && !restDone)
+              if (restSlot != null && restDate != null && restOpen && !restDone)
                 Align(
                   alignment: Alignment.centerLeft,
                   child: OutlinedButton(

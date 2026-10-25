@@ -46,7 +46,9 @@ DateTime _day(DateTime d) => DateTime(d.year, d.month, d.day);
 /// For each of the [lookbackDays] days before [today] (never today), the slots
 /// that have a regimen item (by [slotItems]) with no dose logged. A day with
 /// an entry still `pending` or `no_key` is skipped, since the entry may log
-/// those doses once read. Oldest first, slots in the given order.
+/// those doses once read. With [now], yesterday is also left out before
+/// [slotCarryOverHour]:00, while one-tap still offers its slots as current.
+/// Oldest first, slots in the given order.
 List<MissedSlot> missedSlots({
   required DateTime today,
   required List<DoseSlot> slots,
@@ -54,6 +56,7 @@ List<MissedSlot> missedSlots({
   required List<Medication> medications,
   required List<DoseLog> doses,
   required List<RawEntry> entries,
+  DateTime? now,
   int lookbackDays = missedLookbackDays,
 }) {
   final base = _day(today);
@@ -61,10 +64,11 @@ List<MissedSlot> missedSlots({
     for (final e in entries)
       if (e.state == 'pending' || e.state == 'no_key') _day(e.createdOnDevice.toLocal()),
   };
+  final carrying = now != null && now.hour < slotCarryOverHour;
   final result = <MissedSlot>[];
   for (var back = lookbackDays; back >= 1; back--) {
     final date = DateTime(base.year, base.month, base.day - back);
-    if (unread.contains(date)) {
+    if (unread.contains(date) || (carrying && back == 1)) {
       continue;
     }
     for (final slot in slots) {

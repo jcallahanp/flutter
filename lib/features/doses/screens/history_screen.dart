@@ -26,6 +26,7 @@ import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:wger/core/formatting/formatting.dart';
 import 'package:wger/core/wide_screen_wrapper.dart';
+import 'package:wger/features/doses/logic/one_tap.dart';
 import 'package:wger/features/doses/models/dose_log.dart';
 import 'package:wger/features/doses/models/medication.dart';
 import 'package:wger/features/doses/providers/dose_repository.dart';
@@ -98,16 +99,10 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     }
   }
 
-  /// When a dose without a time was taken: now for today, else the slot's
-  /// usual time on the dose's day (noon without a slot), not the edit time.
+  /// When a dose without a time was taken, see [defaultTakenAt].
   Future<DateTime> _takenAtFor(DoseLog dose, DoseRepository repo) async {
-    final now = widget.clock();
-    final day = DateTime(dose.date.year, dose.date.month, dose.date.day);
-    if (day == DateTime(now.year, now.month, now.day)) {
-      return now;
-    }
     final usual = dose.regimenId == null ? null : await repo.usualTimeOfRegimen(dose.regimenId!);
-    return DateTime(day.year, day.month, day.day, usual?.hour ?? 12, usual?.minute ?? 0);
+    return defaultTakenAt(date: dose.date, now: widget.clock(), usualTime: usual);
   }
 
   Future<void> _delete(DoseLog dose) async {
@@ -236,7 +231,7 @@ class _EditDialogState extends State<_EditDialog> {
       _error = null;
       if (status == 'skipped' || status == 'missed') {
         _amount.text = '0';
-      } else if ((double.tryParse(_amount.text.trim().replaceAll(',', '.')) ?? 0) == 0) {
+      } else if ((parseDoseAmount(_amount.text) ?? 0) == 0) {
         // Back from skipped or missed: start from the planned amount
         final planned = widget.dose.plannedAmount;
         _amount.text = planned == null ? '' : _plain(planned);
@@ -246,7 +241,7 @@ class _EditDialogState extends State<_EditDialog> {
 
   void _save() {
     final i18n = AppLocalizations.of(context);
-    final value = double.tryParse(_amount.text.trim().replaceAll(',', '.'));
+    final value = parseDoseAmount(_amount.text);
     if (value == null || value < 0) {
       setState(() => _error = i18n.historyAmountInvalid);
       return;
