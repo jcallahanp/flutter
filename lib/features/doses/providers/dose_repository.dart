@@ -28,9 +28,11 @@ import 'package:material_ui/material_ui.dart' show TimeOfDay;
 import 'package:powersync/powersync.dart' as ps;
 import 'package:wger/database/converters/date_only_text_converter.dart';
 import 'package:wger/database/powersync/database.dart';
+import 'package:wger/features/doses/logic/one_tap.dart';
 import 'package:wger/features/doses/models/dose_log.dart';
 import 'package:wger/features/doses/models/dose_slot.dart';
 import 'package:wger/features/doses/models/medication.dart';
+import 'package:wger/features/doses/models/parse_result.dart';
 import 'package:wger/features/doses/models/raw_entry.dart';
 import 'package:wger/features/doses/models/regimen.dart';
 
@@ -74,6 +76,21 @@ class DoseRepository {
         (t) =>
             t.startDate.isSmallerOrEqualValue(day) &
             (t.endDate.isNull() | t.endDate.isBiggerOrEqualValue(day)),
+      )
+      ..orderBy([
+        (t) => OrderingTerm(expression: t.startDate),
+        (t) => OrderingTerm(expression: t.id),
+      ]);
+    return query.watch();
+  }
+
+  /// The regimens in force on at least one day from [from] to [to].
+  Stream<List<Regimen>> watchRegimenBetween(DateTime from, DateTime to) {
+    final query = _db.select(_db.regimenTable)
+      ..where(
+        (t) =>
+            t.startDate.isSmallerOrEqualValue(_dayText(to)) &
+            (t.endDate.isNull() | t.endDate.isBiggerOrEqualValue(_dayText(from))),
       )
       ..orderBy([
         (t) => OrderingTerm(expression: t.startDate),
@@ -138,6 +155,51 @@ class DoseRepository {
         (t) => OrderingTerm(expression: t.id),
       ]);
     return query.watch();
+  }
+
+  /// The dose logs from [from] to [to], both days inclusive.
+  Stream<List<DoseLog>> watchDosesBetween(DateTime from, DateTime to) {
+    final query = _db.select(_db.doseLogTable)
+      ..where(
+        (t) =>
+            t.date.isBiggerOrEqualValue(_dayText(from)) &
+            t.date.isSmallerOrEqualValue(_dayText(to)),
+      )
+      ..orderBy([(t) => OrderingTerm(expression: t.date), (t) => OrderingTerm(expression: t.id)]);
+    return query.watch();
+  }
+
+  /// The doses created from the raw entry [rawEntryId].
+  Stream<List<DoseLog>> watchDosesOfEntry(String rawEntryId) {
+    final query = _db.select(_db.doseLogTable)
+      ..where((t) => t.rawEntryId.equals(rawEntryId))
+      ..orderBy([(t) => OrderingTerm(expression: t.date), (t) => OrderingTerm(expression: t.id)]);
+    return query.watch();
+  }
+
+  /// The server's parse result of the raw entry [rawEntryId], `null` until it
+  /// has synced down.
+  Stream<ParseResult?> watchParseResultFor(String rawEntryId) {
+    final query = _db.select(_db.parseResultTable)
+      ..where((t) => t.rawEntryId.equals(rawEntryId))
+      ..orderBy([(t) => OrderingTerm.desc(t.created), (t) => OrderingTerm(expression: t.id)])
+      ..limit(1);
+    return query.watchSingleOrNull();
+  }
+
+  /// The entries written on or after the (device-local) day [from], oldest
+  /// first.
+  Stream<List<RawEntry>> watchRawEntriesSince(DateTime from) {
+    final start = DateTime(from.year, from.month, from.day);
+    // Filtered after parsing, see watchRawEntriesOn
+    return _db.select(_db.rawEntryTable).watch().map((rows) {
+      final recent = rows.where((e) => !e.createdOnDevice.isBefore(start)).toList();
+      recent.sort((a, b) {
+        final byTime = a.createdOnDevice.compareTo(b.createdOnDevice);
+        return byTime != 0 ? byTime : a.id.compareTo(b.id);
+      });
+      return recent;
+    });
   }
 
   /// The free-text entries written on the (device-local) day [date].
@@ -313,6 +375,55 @@ class DoseRepository {
       await _db.into(_db.doseLogTable).insert(companion);
       return companion.id.value;
     });
+  }
+
+  /// Logs as taken, at the planned amount, the items of the slot [slotId] that
+  /// have no dose on [date] yet (the one-tap logic), linked to [rawEntryId] so
+  /// Undo can remove them. Does nothing for an unknown slot.
+  Future<void> logRestTaken({
+    required String slotId,
+    required DateTime date,
+    required DateTime now,
+    String? rawEntryId,
+  }) async {
+    final slot = await (_db.select(
+      _db.doseSlotTable,
+    )..where((t) => t.id.equals(slotId))).getSingleOrNull();
+    if (slot == null) {
+      return;
+    }
+    final day = _dayText(date);
+    final regimen =
+        await (_db.select(_db.regimenTable)..where(
+              (t) =>
+                  t.startDate.isSmallerOrEqualValue(day) &
+                  (t.endDate.isNull() | t.endDate.isBiggerOrEqualValue(day)),
+            ))
+            .get();
+    final medications = await _db.select(_db.medicationTable).get();
+    final logged = await (_db.select(_db.doseLogTable)..where((t) => t.date.equals(day))).get();
+    final drafts = oneTapDrafts(
+      slot: slot,
+      slotDate: date,
+      regimen: regimen,
+      medications: medications,
+      logged: logged,
+      now: now,
+    );
+    for (final d in drafts) {
+      await logDose(
+        medicationId: d.medicationId,
+        regimenId: d.regimenId,
+        date: d.date,
+        takenAt: d.takenAt,
+        plannedAmount: d.plannedAmount,
+        amount: d.amount,
+        unit: d.unit,
+        status: d.status,
+        source: d.source,
+        rawEntryId: rawEntryId,
+      );
+    }
   }
 
   /// Changes the given fields of the dose [id]; those left out stay as they

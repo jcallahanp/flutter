@@ -393,4 +393,133 @@ void main() {
     await repo.deleteDose(id);
     expect(await repo.watchDosesOn(day).first, isEmpty);
   });
+
+  test('watchDosesOfEntry and watchDosesBetween select the right doses', () async {
+    final ids = await medAndSlot();
+    final entry = await repo.createRawEntry('took metformin');
+    await dose(ids.med, DateTime(2026, 10, 20), rawEntryId: entry);
+    await dose(ids.med, DateTime(2026, 10, 22));
+    await dose(ids.med, DateTime(2026, 10, 26));
+
+    expect(await repo.watchDosesOfEntry(entry).first, hasLength(1));
+    expect(await repo.watchDosesOfEntry('other').first, isEmpty);
+    final range = await repo
+        .watchDosesBetween(DateTime(2026, 10, 20), DateTime(2026, 10, 25))
+        .first;
+    expect(range.map((d) => d.date), [DateTime.utc(2026, 10, 20), DateTime.utc(2026, 10, 22)]);
+  });
+
+  test('watchParseResultFor is null until the server result arrives', () async {
+    final entry = await repo.createRawEntry('some text');
+    expect(await repo.watchParseResultFor(entry).first, isNull);
+
+    await db
+        .into(db.parseResultTable)
+        .insert(
+          ParseResultTableCompanion.insert(
+            id: 'p1',
+            rawEntryId: entry,
+            model: 'm',
+            toolCalls: '[]',
+            question: 'Which one?',
+            proposal: const Value({'type': 'add_medication'}),
+            inputTokens: 1,
+            outputTokens: 1,
+            error: '',
+            created: DateTime.utc(2026, 10, 25),
+          ),
+        );
+    final result = await repo.watchParseResultFor(entry).first;
+    expect(result!.question, 'Which one?');
+    expect(result.proposal, {'type': 'add_medication'});
+    expect(await repo.watchParseResultFor('other').first, isNull);
+  });
+
+  test('watchRawEntriesSince lists recent entries oldest first', () async {
+    await repo.createRawEntry('a');
+    await repo.createRawEntry('b');
+    final entries = await repo
+        .watchRawEntriesSince(DateTime.now().subtract(const Duration(days: 1)))
+        .first;
+    expect(entries.map((e) => e.text), ['a', 'b']);
+    expect(
+      await repo.watchRawEntriesSince(DateTime.now().add(const Duration(days: 2))).first,
+      isEmpty,
+    );
+  });
+
+  test('watchRegimenBetween returns regimens in force on any day of the range', () async {
+    final ids = await medAndSlot();
+    Future<String> regimen(DateTime start, DateTime? end) => repo.saveRegimen(
+      medicationId: ids.med,
+      slotId: ids.slot,
+      amount: 1,
+      unit: 'tablet',
+      startDate: start,
+      endDate: end,
+    );
+    await regimen(DateTime(2026, 1, 1), DateTime(2026, 10, 10));
+    final endsInside = await regimen(DateTime(2026, 1, 1), DateTime(2026, 10, 19));
+    final open = await regimen(DateTime(2026, 1, 1), null);
+    await regimen(DateTime(2026, 10, 26), DateTime(2026, 12, 31));
+
+    final found = await repo
+        .watchRegimenBetween(DateTime(2026, 10, 18), DateTime(2026, 10, 24))
+        .first;
+    expect(found.map((r) => r.id).toSet(), {endsInside, open});
+  });
+
+  test('logRestTaken logs only the unlogged items of the slot, linked to the entry', () async {
+    final ids = await medAndSlot();
+    final other = await repo.saveMedication(name: 'Vitamin D', unit: 'IU');
+    final r1 = await repo.saveRegimen(
+      medicationId: ids.med,
+      slotId: ids.slot,
+      amount: 1,
+      unit: 'tablet',
+      startDate: DateTime(2026, 1, 1),
+    );
+    await repo.saveRegimen(
+      medicationId: other,
+      slotId: ids.slot,
+      amount: 2,
+      unit: 'drop',
+      startDate: DateTime(2026, 1, 1),
+    );
+    final day = DateTime(2026, 10, 24);
+    await repo.logDose(
+      medicationId: ids.med,
+      regimenId: r1,
+      date: day,
+      amount: 1,
+      unit: 'tablet',
+      status: 'skipped',
+      source: 'manual',
+    );
+    final entry = await repo.createRawEntry('rest taken');
+
+    await repo.logRestTaken(
+      slotId: ids.slot,
+      date: day,
+      now: DateTime(2026, 10, 25, 9),
+      rawEntryId: entry,
+    );
+    final doses = await repo.watchDosesOn(day).first;
+    expect(doses, hasLength(2));
+    final added = doses.singleWhere((d) => d.medicationId == other);
+    expect(
+      [added.status, added.source, added.amount, added.plannedAmount],
+      [
+        'taken',
+        'one_tap',
+        2,
+        2,
+      ],
+    );
+    expect(added.rawEntryId, entry);
+    expect(doses.singleWhere((d) => d.medicationId == ids.med).status, 'skipped');
+
+    await repo.logRestTaken(slotId: 'unknown', date: day, now: DateTime(2026, 10, 25));
+    expect(await repo.watchDosesOn(day).first, hasLength(2));
+  });
 }
