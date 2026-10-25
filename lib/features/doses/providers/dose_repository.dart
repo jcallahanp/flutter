@@ -30,6 +30,7 @@ import 'package:wger/database/converters/date_only_text_converter.dart';
 import 'package:wger/database/powersync/database.dart';
 import 'package:wger/features/doses/models/dose_log.dart';
 import 'package:wger/features/doses/models/dose_slot.dart';
+import 'package:wger/features/doses/models/medication.dart';
 import 'package:wger/features/doses/models/raw_entry.dart';
 import 'package:wger/features/doses/models/regimen.dart';
 
@@ -79,6 +80,43 @@ class DoseRepository {
         (t) => OrderingTerm(expression: t.id),
       ]);
     return query.watch();
+  }
+
+  /// All medications, by name.
+  Stream<List<Medication>> watchMedications() {
+    final query = _db.select(_db.medicationTable)
+      ..orderBy([(t) => OrderingTerm(expression: t.name), (t) => OrderingTerm(expression: t.id)]);
+    return query.watch();
+  }
+
+  /// The regimens that have no end date.
+  Stream<List<Regimen>> watchOpenRegimens() {
+    final query = _db.select(_db.regimenTable)
+      ..where((t) => t.endDate.isNull())
+      ..orderBy([
+        (t) => OrderingTerm(expression: t.startDate),
+        (t) => OrderingTerm(expression: t.id),
+      ]);
+    return query.watch();
+  }
+
+  /// Ends the regimen [id] on [date]; the doses already logged stay.
+  Future<void> endRegimen(String id, DateTime date) async {
+    await (_db.update(_db.regimenTable)..where((t) => t.id.equals(id))).write(
+      RegimenTableCompanion(endDate: Value(_day(date))),
+    );
+  }
+
+  /// Sets the medication [id] inactive and ends its open regimens on [date].
+  Future<void> deactivateMedication(String id, DateTime date) async {
+    await _db.transaction(() async {
+      await (_db.update(_db.medicationTable)..where((t) => t.id.equals(id))).write(
+        const MedicationTableCompanion(active: Value(false)),
+      );
+      await (_db.update(_db.regimenTable)
+            ..where((t) => t.medicationId.equals(id) & t.endDate.isNull()))
+          .write(RegimenTableCompanion(endDate: Value(_day(date))));
+    });
   }
 
   /// The dose logs of the day [date].

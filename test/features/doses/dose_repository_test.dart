@@ -109,6 +109,34 @@ void main() {
     expect(found.map((r) => r.id).toSet(), {open, lastDay});
   });
 
+  test('endRegimen and deactivateMedication end open regimens and keep doses', () async {
+    final ids = await medAndSlot();
+    final other = await repo.saveMedication(name: 'Statin', unit: 'mg');
+    Future<String> regimen(String med) => repo.saveRegimen(
+      medicationId: med,
+      slotId: ids.slot,
+      amount: 1,
+      unit: 'tablet',
+      startDate: DateTime(2026, 10, 1),
+    );
+    final a = await regimen(ids.med);
+    final b = await regimen(ids.med);
+    final c = await regimen(other);
+    await dose(ids.med, DateTime(2026, 10, 20));
+
+    expect(await repo.watchOpenRegimens().first, hasLength(3));
+    await repo.endRegimen(a, DateTime(2026, 10, 25, 9));
+    expect((await repo.watchOpenRegimens().first).map((r) => r.id).toSet(), {b, c});
+
+    await repo.deactivateMedication(ids.med, DateTime(2026, 10, 25));
+    expect((await repo.watchOpenRegimens().first).map((r) => r.id), [c]);
+    final meds = await repo.watchMedications().first;
+    expect(meds.map((m) => m.name), ['Metformin', 'Statin']);
+    expect(meds.first.active, isFalse);
+    expect(meds.last.active, isTrue);
+    expect(await repo.watchDosesOn(DateTime(2026, 10, 20)).first, hasLength(1));
+  });
+
   test('createRawEntry stores the time zone and a pending state', () async {
     final before = DateTime.now().toUtc();
     final id = await repo.createRawEntry('took two ibuprofen at noon');
