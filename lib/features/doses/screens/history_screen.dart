@@ -45,7 +45,10 @@ class HistoryScreen extends ConsumerStatefulWidget {
   /// The current time; tests inject one.
   final DateTime Function() clock;
 
-  const HistoryScreen({super.key, this.clock = DateTime.now});
+  /// The day shown first; today when `null`.
+  final DateTime? initialDay;
+
+  const HistoryScreen({super.key, this.clock = DateTime.now, this.initialDay});
 
   static const routeName = '/doses-history';
 
@@ -59,8 +62,8 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   @override
   void initState() {
     super.initState();
-    final now = widget.clock();
-    _day = DateTime(now.year, now.month, now.day);
+    final start = widget.initialDay ?? widget.clock();
+    _day = DateTime(start.year, start.month, start.day);
   }
 
   Future<void> _pickDay() async {
@@ -82,19 +85,29 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       builder: (_) => _EditDialog(dose: dose, name: name),
     );
     if (result != null) {
-      await ref
-          .read(doseRepositoryProvider)
-          .updateDose(
-            id: dose.id,
-            status: Value(result.status),
-            amount: Value(result.amount),
-            takenAt:
-                dose.takenAt == null && (result.status == 'taken' || result.status == 'partial')
-                ? Value(widget.clock())
-                : const Value.absent(),
-            source: const Value('manual'),
-          );
+      final repo = ref.read(doseRepositoryProvider);
+      final needsTime =
+          dose.takenAt == null && (result.status == 'taken' || result.status == 'partial');
+      await repo.updateDose(
+        id: dose.id,
+        status: Value(result.status),
+        amount: Value(result.amount),
+        takenAt: needsTime ? Value(await _takenAtFor(dose, repo)) : const Value.absent(),
+        source: const Value('manual'),
+      );
     }
+  }
+
+  /// When a dose without a time was taken: now for today, else the slot's
+  /// usual time on the dose's day (noon without a slot), not the edit time.
+  Future<DateTime> _takenAtFor(DoseLog dose, DoseRepository repo) async {
+    final now = widget.clock();
+    final day = DateTime(dose.date.year, dose.date.month, dose.date.day);
+    if (day == DateTime(now.year, now.month, now.day)) {
+      return now;
+    }
+    final usual = dose.regimenId == null ? null : await repo.usualTimeOfRegimen(dose.regimenId!);
+    return DateTime(day.year, day.month, day.day, usual?.hour ?? 12, usual?.minute ?? 0);
   }
 
   Future<void> _delete(DoseLog dose) async {

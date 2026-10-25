@@ -174,4 +174,66 @@ void main() {
     expect(d.takenAt, isNotNull);
     await finish(tester);
   });
+
+  testWidgets('a past-day edit stamps the slot time, noon without a slot', (tester) async {
+    late String withSlot;
+    late String without;
+    await tester.runAsync(() async {
+      final slot = await repo.saveSlot(
+        name: 'Evening',
+        usualTime: const TimeOfDay(hour: 21, minute: 30),
+      );
+      final med = await repo.saveMedication(name: 'Metformin', unit: 'mg');
+      final regimen = await repo.saveRegimen(
+        medicationId: med,
+        slotId: slot,
+        amount: 1,
+        unit: 'tablet',
+        startDate: DateTime(2026, 1, 1),
+      );
+      Future<String> missed(String? regimenId) => repo.logDose(
+        medicationId: med,
+        regimenId: regimenId,
+        date: DateTime(2026, 10, 24),
+        amount: 0,
+        unit: 'tablet',
+        status: 'missed',
+        source: 'missed_prompt',
+      );
+      withSlot = await missed(regimen);
+      without = await missed(null);
+    });
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [doseRepositoryProvider.overrideWithValue(repo)],
+        child: MaterialApp(
+          localizationsDelegates: appLocalizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: HistoryScreen(clock: () => now, initialDay: DateTime(2026, 10, 24)),
+        ),
+      ),
+    );
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
+    await tester.pumpAndSettle();
+
+    for (final id in [withSlot, without]) {
+      await tester.tap(find.byKey(Key('history-dose-$id')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('history-status-taken')));
+      await tester.pump();
+      await tester.enterText(find.byKey(const Key('history-amount')), '1');
+      await tester.tap(find.byKey(const Key('history-save')));
+      await settle(tester);
+    }
+    final doses = (await tester.runAsync(() => repo.watchDosesOn(DateTime(2026, 10, 24)).first))!;
+    expect(
+      doses.singleWhere((d) => d.id == withSlot).takenAt!.toLocal(),
+      DateTime(2026, 10, 24, 21, 30),
+    );
+    expect(
+      doses.singleWhere((d) => d.id == without).takenAt!.toLocal(),
+      DateTime(2026, 10, 24, 12),
+    );
+    await finish(tester);
+  });
 }

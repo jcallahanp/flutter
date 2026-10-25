@@ -93,7 +93,12 @@ class _MissedPromptState extends ConsumerState<MissedPrompt> {
       if (_loaded.contains(key) || !_loading.add(key)) {
         continue;
       }
-      final hidden = await store.isDismissed(m.slot.id, m.date);
+      var hidden = false;
+      try {
+        hidden = await store.isDismissed(m.slot.id, m.date);
+      } catch (_) {
+        // Unreadable storage: ask again rather than hide the prompt
+      }
       if (!mounted) {
         return;
       }

@@ -172,7 +172,8 @@ class _LogBoxState extends ConsumerState<LogBox> {
     try {
       await _speech.start(
         (words) {
-          if (!mounted) {
+          // A late final result after stop must not refill the box
+          if (!mounted || !_listening) {
             return;
           }
           final text = [_dictationBase, words].where((s) => s.isNotEmpty).join(' ');

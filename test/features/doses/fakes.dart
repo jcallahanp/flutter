@@ -34,10 +34,15 @@ class FakeSpeech implements SpeechInput {
 
 class FakeDismissals implements MissedDismissals {
   final keys = <String>{};
+  bool throwOnRead = false;
 
   @override
-  Future<bool> isDismissed(String slotId, DateTime date) async =>
-      keys.contains(missedDismissKey(slotId, date));
+  Future<bool> isDismissed(String slotId, DateTime date) async {
+    if (throwOnRead) {
+      throw StateError('storage unreadable');
+    }
+    return keys.contains(missedDismissKey(slotId, date));
+  }
 
   @override
   Future<void> dismiss(String slotId, DateTime date) async =>

@@ -211,6 +211,10 @@ void main() {
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 300)));
     await tester.pumpAndSettle();
     expect(speech.listening, isFalse);
+    // a late final result after stop does not refill the cleared box
+    speech.onWords!('took metformin and a pill again');
+    await tester.pump();
+    expect(tester.widget<TextField>(find.byKey(const Key('log-box-field'))).controller!.text, '');
     await finish(tester);
   });
 
@@ -259,6 +263,56 @@ void main() {
     await pump(tester);
     expect(find.text('took pills at 23:50'), findsOneWidget);
     expect(find.text('parsed long ago'), findsNothing);
+    await finish(tester);
+  });
+
+  testWidgets('an answered question leaves Today after its day, an open reply keeps it', (
+    tester,
+  ) async {
+    Future<void> stamp(String id, String state, DateTime at) =>
+        (db.update(db.rawEntryTable)..where((t) => t.id.equals(id))).write(
+          RawEntryTableCompanion(state: Value(state), createdOnDevice: Value(at.toUtc())),
+        );
+    await tester.runAsync(() async {
+      await seedEvening();
+      final answered = await repo.createRawEntry('answered question');
+      await stamp(answered, 'needs_answer', DateTime(2026, 10, 24, 20));
+      final reply = await repo.createRawEntry('my answer', parentId: answered);
+      await stamp(reply, 'parsed', DateTime(2026, 10, 24, 20, 5));
+
+      final carried = await repo.createRawEntry('carried question');
+      await stamp(carried, 'needs_answer', DateTime(2026, 10, 24, 21));
+      final reply2 = await repo.createRawEntry('still unread answer', parentId: carried);
+      await stamp(reply2, 'pending', DateTime(2026, 10, 24, 21, 5));
+    });
+    now = DateTime(2026, 10, 25, 10);
+    await pump(tester);
+    expect(find.text('answered question'), findsNothing);
+    expect(find.text('carried question'), findsOneWidget);
+    expect(find.text('still unread answer'), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('missed prompt shows when the stored choice cannot be read', (tester) async {
+    dismissals.throwOnRead = true;
+    await tester.runAsync(() async {
+      await seedEvening();
+      final meds = await repo.watchMedications().first;
+      final regimen = (await repo.watchOpenRegimens().first).single;
+      for (var d = 18; d <= 23; d++) {
+        await repo.logDose(
+          medicationId: meds.single.id,
+          regimenId: regimen.id,
+          date: DateTime(2026, 10, d),
+          amount: 1,
+          unit: 'tablet',
+          status: 'taken',
+          source: 'manual',
+        );
+      }
+    });
+    await pump(tester);
+    expect(find.text('No Evening meds logged yesterday. Mark as missed?'), findsOneWidget);
     await finish(tester);
   });
 

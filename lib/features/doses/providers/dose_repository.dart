@@ -426,6 +426,21 @@ class DoseRepository {
     }
   }
 
+  /// The usual time of the slot of the regimen [regimenId], `null` when the
+  /// regimen or its slot is unknown.
+  Future<TimeOfDay?> usualTimeOfRegimen(String regimenId) async {
+    final regimen = await (_db.select(
+      _db.regimenTable,
+    )..where((t) => t.id.equals(regimenId))).getSingleOrNull();
+    if (regimen == null) {
+      return null;
+    }
+    final slot = await (_db.select(
+      _db.doseSlotTable,
+    )..where((t) => t.id.equals(regimen.slotId))).getSingleOrNull();
+    return slot?.usualTime;
+  }
+
   /// Changes the given fields of the dose [id]; those left out stay as they
   /// are (so editing the amount keeps the regimen and raw entry links).
   Future<void> updateDose({

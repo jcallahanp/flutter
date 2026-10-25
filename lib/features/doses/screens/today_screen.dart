@@ -243,7 +243,12 @@ List<RawEntry> _visibleRoots(
 ) {
   bool qualifies(RawEntry e) {
     final local = e.createdOnDevice.toLocal();
-    return DateTime(local.year, local.month, local.day) == today || _openStates.contains(e.state);
+    if (DateTime(local.year, local.month, local.day) == today) {
+      return true;
+    }
+    // A question that has a reply is answered; the reply carries on the thread
+    final answered = e.state == 'needs_answer' && (repliesOf[e.id] ?? const []).isNotEmpty;
+    return _openStates.contains(e.state) && !answered;
   }
 
   bool threadQualifies(RawEntry e, Set<String> seen) =>
