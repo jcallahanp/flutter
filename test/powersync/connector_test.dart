@@ -172,6 +172,29 @@ void main() {
         expect(out['description'], 'leg day pump');
       });
 
+      test('strips the time component on the dose log and regimen dates', () {
+        final log = connector.genericTransform(
+          'healthhub_doselog',
+          {
+            'medication_id': 'm1',
+            'date': '2026-10-25T00:00:00.000Z',
+            'taken_at': '2026-10-25T08:01:00.000Z',
+          },
+          '4',
+        );
+        expect(log['date'], '2026-10-25');
+        expect(log['medication'], 'm1');
+        expect(log['taken_at'], '2026-10-25T08:01:00.000Z');
+
+        final regimen = connector.genericTransform(
+          'healthhub_regimen',
+          {'start_date': '2026-10-01T00:00:00.000Z', 'end_date': null},
+          '5',
+        );
+        expect(regimen['start_date'], '2026-10-01');
+        expect(regimen['end_date'], isNull);
+      });
+
       test('passes nulls through (open-ended end date)', () {
         final out = connector.genericTransform(
           'nutrition_nutritionplan',

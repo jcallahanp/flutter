@@ -17,6 +17,7 @@
  */
 
 import 'package:powersync/powersync.dart';
+import 'package:wger/database/powersync/tables/doses.dart';
 import 'package:wger/database/powersync/tables/exercise.dart';
 import 'package:wger/database/powersync/tables/gallery.dart';
 import 'package:wger/database/powersync/tables/ingredient.dart';
@@ -68,6 +69,14 @@ Schema schema = const Schema(
 
     // Gallery
     PowersyncGalleryImageTable,
+
+    // Medication dose logging
+    PowersyncMedicationTable,
+    PowersyncDoseSlotTable,
+    PowersyncRegimenTable,
+    PowersyncRawEntryTable,
+    PowersyncParseResultTable,
+    PowersyncDoseLogTable,
   ],
   // Raw (native SQLite) tables bypass the JSON-view layer for big read-only
   // catalogue tables. The matching CREATE TABLE/INDEX statements live in

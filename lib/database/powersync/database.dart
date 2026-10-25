@@ -32,6 +32,12 @@ import 'package:wger/database/converters/time_of_day_converter.dart';
 import 'package:wger/database/converters/utc_datetime_converter.dart';
 import 'package:wger/database/converters/workout_impression_converter.dart';
 import 'package:wger/features/account/models/user_profile.dart';
+import 'package:wger/features/doses/models/dose_log.dart';
+import 'package:wger/features/doses/models/dose_slot.dart';
+import 'package:wger/features/doses/models/medication.dart';
+import 'package:wger/features/doses/models/parse_result.dart';
+import 'package:wger/features/doses/models/raw_entry.dart';
+import 'package:wger/features/doses/models/regimen.dart';
 import 'package:wger/features/exercises/models/alias.dart';
 import 'package:wger/features/exercises/models/category.dart';
 import 'package:wger/features/exercises/models/comment.dart';
@@ -56,6 +62,7 @@ import 'package:wger/features/routines/models/session.dart';
 import 'package:wger/features/routines/models/weight_unit.dart';
 
 import 'powersync.dart';
+import 'tables/doses.dart';
 import 'tables/exercise.dart';
 import 'tables/gallery.dart';
 import 'tables/ingredient.dart';
@@ -111,6 +118,14 @@ part 'database.g.dart';
 
     // Gallery
     GalleryImageTable,
+
+    // Doses
+    MedicationTable,
+    DoseSlotTable,
+    RegimenTable,
+    RawEntryTable,
+    ParseResultTable,
+    DoseLogTable,
   ],
   //include: {'queries.drift'},
 )
