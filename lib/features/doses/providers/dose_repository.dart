@@ -293,22 +293,26 @@ class DoseRepository {
       note: note,
     );
     // The server keeps one log per regimen and day and refuses a second, which
-    // the upload would then drop silently: log again onto the existing row
-    if (regimenId != null) {
-      final existing =
-          await (_db.select(_db.doseLogTable)
-                ..where((t) => t.regimenId.equals(regimenId) & t.date.equals(_dayText(date)))
-                ..limit(1))
-              .getSingleOrNull();
-      if (existing != null) {
-        await (_db.update(_db.doseLogTable)..where((t) => t.id.equals(existing.id))).write(
-          companion.copyWith(id: const Value.absent()),
-        );
-        return existing.id;
+    // the upload would then drop silently: log again onto the existing row.
+    // Lookup and write share a transaction, so concurrent calls cannot both
+    // insert.
+    return _db.transaction(() async {
+      if (regimenId != null) {
+        final existing =
+            await (_db.select(_db.doseLogTable)
+                  ..where((t) => t.regimenId.equals(regimenId) & t.date.equals(_dayText(date)))
+                  ..limit(1))
+                .getSingleOrNull();
+        if (existing != null) {
+          await (_db.update(_db.doseLogTable)..where((t) => t.id.equals(existing.id))).write(
+            companion.copyWith(id: const Value.absent()),
+          );
+          return existing.id;
+        }
       }
-    }
-    await _db.into(_db.doseLogTable).insert(companion);
-    return companion.id.value;
+      await _db.into(_db.doseLogTable).insert(companion);
+      return companion.id.value;
+    });
   }
 
   /// Changes the given fields of the dose [id]; those left out stay as they
