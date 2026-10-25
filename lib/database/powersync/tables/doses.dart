@@ -176,7 +176,7 @@ class ParseResultTable extends Table {
   @override
   String get tableName => 'healthhub_parseresult';
 
-  TextColumn get id => text().clientDefault(() => ps.uuid.v7())();
+  TextColumn get id => text()();
 
   TextColumn get rawEntryId => text().named('raw_entry_id')();
   TextColumn get model => text()();

@@ -11739,8 +11739,7 @@ class $ParseResultTableTable extends ParseResultTable
     aliasedName,
     false,
     type: DriftSqlType.string,
-    requiredDuringInsert: false,
-    clientDefault: () => ps.uuid.v7(),
+    requiredDuringInsert: true,
   );
   static const VerificationMeta _rawEntryIdMeta = const VerificationMeta(
     'rawEntryId',
@@ -11862,6 +11861,8 @@ class $ParseResultTableTable extends ParseResultTable
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
       context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
     }
     if (data.containsKey('raw_entry_id')) {
       context.handle(
@@ -12021,7 +12022,7 @@ class ParseResultTableCompanion extends UpdateCompanion<ParseResult> {
     this.rowid = const Value.absent(),
   });
   ParseResultTableCompanion.insert({
-    this.id = const Value.absent(),
+    required String id,
     required String rawEntryId,
     required String model,
     required String toolCalls,
@@ -12032,7 +12033,8 @@ class ParseResultTableCompanion extends UpdateCompanion<ParseResult> {
     required String error,
     required DateTime created,
     this.rowid = const Value.absent(),
-  }) : rawEntryId = Value(rawEntryId),
+  }) : id = Value(id),
+       rawEntryId = Value(rawEntryId),
        model = Value(model),
        toolCalls = Value(toolCalls),
        question = Value(question),
@@ -26432,7 +26434,7 @@ typedef $$RawEntryTableTableProcessedTableManager =
     >;
 typedef $$ParseResultTableTableCreateCompanionBuilder =
     ParseResultTableCompanion Function({
-      Value<String> id,
+      required String id,
       required String rawEntryId,
       required String model,
       required String toolCalls,
@@ -26685,7 +26687,7 @@ class $$ParseResultTableTableTableManager
               ),
           createCompanionCallback:
               ({
-                Value<String> id = const Value.absent(),
+                required String id,
                 required String rawEntryId,
                 required String model,
                 required String toolCalls,

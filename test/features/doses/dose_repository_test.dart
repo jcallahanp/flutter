@@ -16,6 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+import 'package:drift/drift.dart' show Value;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart' show TimeOfDay;
 import 'package:wger/database/powersync/database.dart';
@@ -135,12 +136,125 @@ void main() {
     expect(await db.select(db.rawEntryTable).get(), hasLength(1));
   });
 
-  test('watchRawEntriesOn returns the entries of that day only', () async {
-    final id = await repo.createRawEntry('today');
-    final today = DateTime.now();
+  test('createRawEntry refuses blank text', () async {
+    expect(() => repo.createRawEntry(''), throwsArgumentError);
+    expect(() => repo.createRawEntry(' \n\t '), throwsArgumentError);
+    expect(await db.select(db.rawEntryTable).get(), isEmpty);
+  });
 
-    expect((await repo.watchRawEntriesOn(today).first).map((e) => e.id), [id]);
-    expect(await repo.watchRawEntriesOn(today.subtract(const Duration(days: 1))).first, isEmpty);
+  test('watchRawEntriesOn filters the local day across stored formats', () async {
+    final day = DateTime(2026, 10, 25, 15);
+    final start = DateTime(2026, 10, 25);
+    final end = DateTime(2026, 10, 26);
+    String iso(DateTime t) => t.toUtc().toIso8601String();
+    // Postgres/PowerSync style: space separator
+    String spaced(DateTime t) => iso(t).replaceFirst('T', ' ');
+
+    Future<void> insert(String id, String created) => db.customStatement(
+      'INSERT INTO healthhub_rawentry (id, text, created_on_device, time_zone, state) '
+      "VALUES (?, 'x', ?, 'UTC', 'pending')",
+      [id, created],
+    );
+
+    await insert('a-first-ms', iso(start));
+    await insert('b-spaced', spaced(start.add(const Duration(hours: 5))));
+    await insert(
+      'c-offset',
+      '${spaced(start.add(const Duration(hours: 9))).replaceAll('Z', '')}+00',
+    );
+    await insert('d-last-ms', iso(end.subtract(const Duration(milliseconds: 1))));
+    await insert('e-before', iso(start.subtract(const Duration(milliseconds: 1))));
+    await insert('f-after', spaced(end));
+
+    final found = await repo.watchRawEntriesOn(day).first;
+    expect(found.map((e) => e.id), ['a-first-ms', 'b-spaced', 'c-offset', 'd-last-ms']);
+  });
+
+  test('logDose onto an existing (regimen, date) updates that row', () async {
+    final ids = await medAndSlot();
+    final regimenId = await repo.saveRegimen(
+      medicationId: ids.med,
+      slotId: ids.slot,
+      amount: 1,
+      unit: 'tablet',
+      startDate: DateTime(2026, 10, 1),
+    );
+    final day = DateTime(2026, 10, 25);
+    Future<String> log(String status, double amount) => repo.logDose(
+      medicationId: ids.med,
+      regimenId: regimenId,
+      date: day,
+      amount: amount,
+      unit: 'tablet',
+      status: status,
+      source: 'one_tap',
+    );
+
+    final first = await log('missed', 0);
+    final second = await log('taken', 1);
+
+    expect(second, first);
+    final doses = await repo.watchDosesOn(day).first;
+    expect(doses, hasLength(1));
+    expect(doses.single.status, 'taken');
+    expect(doses.single.amount, 1);
+
+    // another day, or no regimen, still inserts
+    await repo.logDose(
+      medicationId: ids.med,
+      regimenId: regimenId,
+      date: DateTime(2026, 10, 26),
+      amount: 1,
+      unit: 'tablet',
+      status: 'taken',
+      source: 'one_tap',
+    );
+    await dose(ids.med, day);
+    await dose(ids.med, day);
+    expect(await db.select(db.doseLogTable).get(), hasLength(4));
+  });
+
+  test('updateDose changes only the fields passed', () async {
+    final ids = await medAndSlot();
+    final regimenId = await repo.saveRegimen(
+      medicationId: ids.med,
+      slotId: ids.slot,
+      amount: 1,
+      unit: 'tablet',
+      startDate: DateTime(2026, 10, 1),
+    );
+    final entry = await repo.createRawEntry('one');
+    final day = DateTime(2026, 10, 25);
+    final takenAt = DateTime.utc(2026, 10, 25, 8);
+    final id = await repo.logDose(
+      medicationId: ids.med,
+      regimenId: regimenId,
+      date: day,
+      takenAt: takenAt,
+      plannedAmount: 1,
+      amount: 1,
+      unit: 'tablet',
+      status: 'taken',
+      source: 'parsed',
+      rawEntryId: entry,
+      note: 'with food',
+    );
+
+    await repo.updateDose(id: id, amount: const Value(0.5), status: const Value('partial'));
+
+    final row = (await repo.watchDosesOn(day).first).single;
+    expect(row.amount, 0.5);
+    expect(row.status, 'partial');
+    expect(row.regimenId, regimenId);
+    expect(row.rawEntryId, entry);
+    expect(row.takenAt?.toUtc(), takenAt);
+    expect(row.plannedAmount, 1);
+    expect(row.note, 'with food');
+    expect(row.source, 'parsed');
+
+    // an explicit null clears the link
+    await repo.updateDose(id: id, rawEntryId: const Value(null));
+    expect((await repo.watchDosesOn(day).first).single.rawEntryId, isNull);
   });
 
   test('deleteDosesOf removes only the doses of that entry', () async {
@@ -173,14 +287,11 @@ void main() {
 
     await repo.updateDose(
       id: id,
-      medicationId: ids.med,
-      date: day,
-      amount: 0.5,
-      plannedAmount: 1,
-      unit: 'tablet',
-      status: 'partial',
-      source: 'manual',
-      note: 'half',
+      amount: const Value(0.5),
+      plannedAmount: const Value(1),
+      status: const Value('partial'),
+      source: const Value('manual'),
+      note: const Value('half'),
     );
     doses = await repo.watchDosesOn(day).first;
     expect(doses.single.amount, 0.5);

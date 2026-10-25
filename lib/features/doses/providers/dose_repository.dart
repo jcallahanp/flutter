@@ -97,17 +97,20 @@ class DoseRepository {
   Stream<List<RawEntry>> watchRawEntriesOn(DateTime date) {
     final start = DateTime(date.year, date.month, date.day);
     final end = DateTime(date.year, date.month, date.day + 1);
-    final query = _db.select(_db.rawEntryTable)
-      ..where(
-        (t) =>
-            t.createdOnDevice.isBiggerOrEqualValue(start.toUtc()) &
-            t.createdOnDevice.isSmallerThanValue(end.toUtc()),
-      )
-      ..orderBy([
-        (t) => OrderingTerm(expression: t.createdOnDevice),
-        (t) => OrderingTerm(expression: t.id),
-      ]);
-    return query.watch();
+    // Filtered after parsing rather than in SQL: rows synced back from
+    // Postgres carry timestamptz text ("2026-10-25 20:00:00+00", a space and
+    // an offset), which does not compare lexically with the ISO form written
+    // here. The converter parses all of them.
+    return _db.select(_db.rawEntryTable).watch().map((rows) {
+      final day = rows
+          .where((e) => !e.createdOnDevice.isBefore(start) && e.createdOnDevice.isBefore(end))
+          .toList();
+      day.sort((a, b) {
+        final byTime = a.createdOnDevice.compareTo(b.createdOnDevice);
+        return byTime != 0 ? byTime : a.id.compareTo(b.id);
+      });
+      return day;
+    });
   }
 
   /// Creates or updates a medication, returns its id. There is no delete:
@@ -216,31 +219,46 @@ class DoseRepository {
       rawEntryId: rawEntryId,
       note: note,
     );
+    // The server keeps one log per regimen and day and refuses a second, which
+    // the upload would then drop silently: log again onto the existing row
+    if (regimenId != null) {
+      final existing =
+          await (_db.select(_db.doseLogTable)
+                ..where((t) => t.regimenId.equals(regimenId) & t.date.equals(_dayText(date)))
+                ..limit(1))
+              .getSingleOrNull();
+      if (existing != null) {
+        await (_db.update(_db.doseLogTable)..where((t) => t.id.equals(existing.id))).write(
+          companion.copyWith(id: const Value.absent()),
+        );
+        return existing.id;
+      }
+    }
     await _db.into(_db.doseLogTable).insert(companion);
     return companion.id.value;
   }
 
-  /// Rewrites the dose [id] with the given values.
+  /// Changes the given fields of the dose [id]; those left out stay as they
+  /// are (so editing the amount keeps the regimen and raw entry links).
   Future<void> updateDose({
     required String id,
-    required String medicationId,
-    String? regimenId,
-    required DateTime date,
-    DateTime? takenAt,
-    double? plannedAmount,
-    required double amount,
-    required String unit,
-    required String status,
-    required String source,
-    String? rawEntryId,
-    String note = '',
+    Value<String> medicationId = const Value.absent(),
+    Value<String?> regimenId = const Value.absent(),
+    Value<DateTime> date = const Value.absent(),
+    Value<DateTime?> takenAt = const Value.absent(),
+    Value<double?> plannedAmount = const Value.absent(),
+    Value<double> amount = const Value.absent(),
+    Value<String> unit = const Value.absent(),
+    Value<String> status = const Value.absent(),
+    Value<String> source = const Value.absent(),
+    Value<String?> rawEntryId = const Value.absent(),
+    Value<String> note = const Value.absent(),
   }) async {
-    final companion = _doseCompanion(
-      id: id,
+    final companion = DoseLogTableCompanion(
       medicationId: medicationId,
       regimenId: regimenId,
-      date: date,
-      takenAt: takenAt,
+      date: date.present ? Value(_day(date.value)) : const Value.absent(),
+      takenAt: takenAt.present ? Value(takenAt.value?.toUtc()) : const Value.absent(),
       plannedAmount: plannedAmount,
       amount: amount,
       unit: unit,
@@ -266,6 +284,9 @@ class DoseRepository {
   ///
   /// Throws [ArgumentError] for text over [rawEntryMaxLength] characters.
   Future<String> createRawEntry(String text, {String? parentId}) async {
+    if (text.trim().isEmpty) {
+      throw ArgumentError.value(text, 'text', 'An entry cannot be empty');
+    }
     if (text.length > rawEntryMaxLength) {
       throw ArgumentError.value(
         text.length,
