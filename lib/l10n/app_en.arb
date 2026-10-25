@@ -2009,5 +2009,8 @@
     }
   },
   "routineInactive": "Inactive",
-  "cancel": "Cancel"
+  "routineSlotExists": "A slot with this name already exists",
+  "routineAlreadyInSlot": "This medication is already in this slot",
+  "cancel": "Cancel",
+  "@cancel": { "description": "Label of a button that closes a dialog without changing anything" }
 }

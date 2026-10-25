@@ -86,11 +86,20 @@ void main() {
     await tester.enterText(field('medNameInput'), 'Metformin');
     await tester.enterText(field('medStrengthInput'), '500');
     await tester.enterText(field('medUnitInput'), 'mg');
+    // Medications start with "No slot"; choose Morning
+    await tester.tap(find.byKey(const Key('slotInput')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Morning').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(field('medAmountInput'), '0');
+    await tester.enterText(field('regimenUnitInput'), 'tablet');
+    await save(tester);
+    expect(find.text('Please enter a valid number'), findsOneWidget);
     await tester.enterText(field('medAmountInput'), '1');
     await tester.enterText(field('regimenUnitInput'), 'tablet');
     await save(tester);
 
-    // The slot is preselected; the regimen row sits under Morning
+    // The regimen row sits under Morning
     expect(find.byKey(const Key('slot-Morning')), findsOneWidget);
     expect(
       find.descendant(
@@ -178,6 +187,8 @@ void main() {
     expect(past, hasLength(1));
     final open = await tester.runAsync(() => repo.watchOpenRegimens().first);
     expect(open, isEmpty);
+    final today = await tester.runAsync(() => repo.watchRegimenOn(DateTime.now()).first);
+    expect(today, isEmpty);
     await finish(tester);
   });
 
@@ -208,6 +219,8 @@ void main() {
     expect(find.text('Inactive'), findsOneWidget);
     final meds = await tester.runAsync(() => repo.watchMedications().first);
     expect(meds!.single.active, isFalse);
+    final today = await tester.runAsync(() => repo.watchRegimenOn(DateTime.now()).first);
+    expect(today, isEmpty);
     await finish(tester);
   });
 
@@ -219,6 +232,53 @@ void main() {
     await tester.enterText(field('slotTimeInput'), '7.30');
     await save(tester);
     expect(find.text('Enter a time as HH:MM'), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('a duplicate slot name is refused', (tester) async {
+    await tester.runAsync(
+      () => repo.saveSlot(name: 'Morning', usualTime: const TimeOfDay(hour: 7, minute: 30)),
+    );
+    await pump(tester);
+    await tester.tap(find.text('Add slot'));
+    await tester.pumpAndSettle();
+    await tester.enterText(field('slotNameInput'), ' Morning ');
+    await tester.enterText(field('slotTimeInput'), '08:00');
+    await save(tester);
+    expect(find.text('A slot with this name already exists'), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('inactive as needed meds stay listed; leaving routine ends regimens', (tester) async {
+    await tester.runAsync(() async {
+      await repo.saveMedication(name: 'Ibuprofen', unit: 'mg', kind: 'as_needed', active: false);
+      final slot = await repo.saveSlot(
+        name: 'Morning',
+        usualTime: const TimeOfDay(hour: 7, minute: 30),
+      );
+      final med = await repo.saveMedication(name: 'Metformin', unit: 'mg');
+      await repo.saveRegimen(
+        medicationId: med,
+        slotId: slot,
+        amount: 1,
+        unit: 'tablet',
+        startDate: DateTime.now().subtract(const Duration(days: 3)),
+      );
+    });
+    await pump(tester);
+    expect(find.text('Ibuprofen'), findsOneWidget);
+    expect(find.text('Inactive'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('edit-medication-Metformin')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('medKindInput')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('As needed').last);
+    await tester.pumpAndSettle();
+    await save(tester);
+
+    final today = await tester.runAsync(() => repo.watchRegimenOn(DateTime.now()).first);
+    expect(today, isEmpty);
     await finish(tester);
   });
 }

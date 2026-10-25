@@ -86,7 +86,7 @@ class _RoutineList extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final i18n = AppLocalizations.of(context);
     final byId = {for (final med in meds) med.id: med};
-    final asNeeded = meds.where((m) => m.active && m.kind == 'as_needed').toList();
+    final asNeeded = meds.where((m) => m.kind == 'as_needed').toList();
     final routine = meds.where((m) => m.kind == 'routine').toList();
 
     return ListView(
@@ -101,14 +101,14 @@ class _RoutineList extends ConsumerWidget {
           _SlotCard(
             slot: slot,
             rows: _rowsOf(slot, byId),
-            nextOrder: slots.length,
+            slots: slots,
           ),
         Align(
           alignment: Alignment.centerLeft,
           child: TextButton.icon(
             icon: const Icon(Icons.add),
             label: Text(i18n.routineAddSlot),
-            onPressed: () => showSlotForm(context, nextOrder: slots.length),
+            onPressed: () => showSlotForm(context, slots: slots),
           ),
         ),
         if (asNeeded.isNotEmpty) ...[
@@ -151,9 +151,9 @@ String _strengthText(BuildContext context, Medication med) =>
 class _SlotCard extends StatelessWidget {
   final DoseSlot slot;
   final List<({Regimen regimen, Medication med})> rows;
-  final int nextOrder;
+  final List<DoseSlot> slots;
 
-  const _SlotCard({required this.slot, required this.rows, required this.nextOrder});
+  const _SlotCard({required this.slot, required this.rows, required this.slots});
 
   @override
   Widget build(BuildContext context) {
@@ -169,7 +169,7 @@ class _SlotCard extends StatelessWidget {
             trailing: IconButton(
               icon: const Icon(Icons.edit),
               tooltip: i18n.routineEditSlot,
-              onPressed: () => showSlotForm(context, slot: slot, nextOrder: nextOrder),
+              onPressed: () => showSlotForm(context, slot: slot, slots: slots),
             ),
           ),
           if (rows.isEmpty)

@@ -75,6 +75,7 @@ class _PlacementFields extends StatelessWidget {
   final TextEditingController unit;
   final ValueChanged<String?> onSlotChanged;
   final ValueChanged<num?> onAmountChanged;
+  final String? error;
 
   const _PlacementFields({
     required this.slots,
@@ -84,6 +85,7 @@ class _PlacementFields extends StatelessWidget {
     required this.unit,
     required this.onSlotChanged,
     required this.onAmountChanged,
+    this.error,
   });
 
   @override
@@ -107,9 +109,16 @@ class _PlacementFields extends StatelessWidget {
             value: amount,
             labelText: i18n.amount,
             isRequired: true,
-            min: 0,
             onChanged: onAmountChanged,
           ),
+          if (error != null)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ),
           TextFormField(
             key: const Key('regimenUnitInput'),
             controller: unit,
@@ -160,6 +169,7 @@ class _MedicationFormState extends ConsumerState<MedicationForm> {
   num? _amount;
   late String _kind;
   String? _slotId;
+  String? _placementError;
 
   @override
   void initState() {
@@ -170,8 +180,7 @@ class _MedicationFormState extends ConsumerState<MedicationForm> {
     _formName = TextEditingController(text: med?.form ?? '');
     _strength = med?.strength;
     _kind = med?.kind ?? 'routine';
-    // Put a new medication in the first slot, "No slot" opts out
-    _slotId = med == null && widget.slots.isNotEmpty ? widget.slots.first.id : null;
+    _slotId = null;
   }
 
   @override
@@ -241,6 +250,7 @@ class _MedicationFormState extends ConsumerState<MedicationForm> {
               unit: _regimenUnit,
               onSlotChanged: (value) => setState(() => _slotId = value),
               onAmountChanged: (value) => _amount = value,
+              error: _placementError,
             ),
           const SizedBox(height: 8),
           _buttons(context, _save),
@@ -251,6 +261,10 @@ class _MedicationFormState extends ConsumerState<MedicationForm> {
 
   Future<void> _save() async {
     if (!_form.currentState!.validate()) {
+      return;
+    }
+    if (_offersSlot && _slotId != null && (_amount ?? 0) <= 0) {
+      setState(() => _placementError = AppLocalizations.of(context).enterValidNumber);
       return;
     }
     final repo = ref.read(doseRepositoryProvider);
@@ -264,6 +278,10 @@ class _MedicationFormState extends ConsumerState<MedicationForm> {
       kind: _kind,
       active: med?.active ?? true,
     );
+    // A medication that is no longer routine is no longer in any slot
+    if (med != null && med.kind == 'routine' && _kind != 'routine') {
+      await repo.endOpenRegimensOf(id, DateTime.now());
+    }
     if (_offersSlot && _slotId != null) {
       await repo.saveRegimen(
         medicationId: id,
@@ -295,6 +313,7 @@ class _RegimenFormState extends ConsumerState<RegimenForm> {
   late final TextEditingController _unit;
   num? _amount;
   late String? _slotId;
+  String? _placementError;
 
   @override
   void initState() {
@@ -325,21 +344,32 @@ class _RegimenFormState extends ConsumerState<RegimenForm> {
             unit: _unit,
             onSlotChanged: (value) => setState(() => _slotId = value),
             onAmountChanged: (value) => _amount = value,
+            error: _placementError,
           ),
           const SizedBox(height: 8),
           _buttons(context, () async {
             if (_slotId == null || !_form.currentState!.validate()) {
               return;
             }
-            await ref
-                .read(doseRepositoryProvider)
-                .saveRegimen(
-                  medicationId: widget.medication.id,
-                  slotId: _slotId!,
-                  amount: _amount!.toDouble(),
-                  unit: _unit.text.trim(),
-                  startDate: DateTime.now(),
-                );
+            final i18n = AppLocalizations.of(context);
+            if ((_amount ?? 0) <= 0) {
+              setState(() => _placementError = i18n.enterValidNumber);
+              return;
+            }
+            try {
+              await ref
+                  .read(doseRepositoryProvider)
+                  .saveRegimen(
+                    medicationId: widget.medication.id,
+                    slotId: _slotId!,
+                    amount: _amount!.toDouble(),
+                    unit: _unit.text.trim(),
+                    startDate: DateTime.now(),
+                  );
+            } on ArgumentError {
+              setState(() => _placementError = i18n.routineAlreadyInSlot);
+              return;
+            }
             if (context.mounted) {
               Navigator.of(context).pop();
             }

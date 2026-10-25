@@ -36,16 +36,15 @@ TimeOfDay? parseSlotTime(String text) {
   return TimeOfDay(hour: int.parse(match.group(1)!), minute: int.parse(match.group(2)!));
 }
 
-/// Shows the slot form in a dialog. [nextOrder] is the default order of a new
-/// slot.
-Future<void> showSlotForm(BuildContext context, {DoseSlot? slot, int nextOrder = 0}) {
+/// Shows the slot form in a dialog. [slots] are all current slots.
+Future<void> showSlotForm(BuildContext context, {DoseSlot? slot, required List<DoseSlot> slots}) {
   final i18n = AppLocalizations.of(context);
   return showDialog<void>(
     context: context,
     builder: (_) => AlertDialog(
       title: Text(slot == null ? i18n.routineAddSlot : i18n.routineEditSlot),
       content: SingleChildScrollView(
-        child: SlotForm(slot: slot, nextOrder: nextOrder),
+        child: SlotForm(slot: slot, slots: slots),
       ),
     ),
   );
@@ -54,9 +53,9 @@ Future<void> showSlotForm(BuildContext context, {DoseSlot? slot, int nextOrder =
 /// Create/edit form for a dose slot: name, usual time and order.
 class SlotForm extends ConsumerStatefulWidget {
   final DoseSlot? slot;
-  final int nextOrder;
+  final List<DoseSlot> slots;
 
-  const SlotForm({this.slot, this.nextOrder = 0, super.key});
+  const SlotForm({this.slot, required this.slots, super.key});
 
   @override
   ConsumerState<SlotForm> createState() => _SlotFormState();
@@ -74,7 +73,7 @@ class _SlotFormState extends ConsumerState<SlotForm> {
     final slot = widget.slot;
     _name = TextEditingController(text: slot?.name ?? '');
     _time = TextEditingController(text: slot == null ? '' : formatSlotTime(slot.usualTime));
-    _order = TextEditingController(text: (slot?.order ?? widget.nextOrder).toString());
+    _order = TextEditingController(text: (slot?.order ?? widget.slots.length).toString());
   }
 
   @override
@@ -98,7 +97,14 @@ class _SlotFormState extends ConsumerState<SlotForm> {
             controller: _name,
             decoration: InputDecoration(labelText: i18n.routineSlotName),
             maxLength: 40,
-            validator: (value) => value == null || value.trim().isEmpty ? i18n.enterValue : null,
+            validator: (value) {
+              final name = value?.trim() ?? '';
+              if (name.isEmpty) {
+                return i18n.enterValue;
+              }
+              final taken = widget.slots.any((s) => s.name == name && s.id != widget.slot?.id);
+              return taken ? i18n.routineSlotExists : null;
+            },
           ),
           TextFormField(
             key: const Key('slotTimeInput'),
