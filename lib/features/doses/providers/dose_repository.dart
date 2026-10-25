@@ -30,6 +30,7 @@ import 'package:wger/database/converters/date_only_text_converter.dart';
 import 'package:wger/database/powersync/database.dart';
 import 'package:wger/features/doses/models/dose_log.dart';
 import 'package:wger/features/doses/models/dose_slot.dart';
+import 'package:wger/features/doses/models/medication.dart';
 import 'package:wger/features/doses/models/raw_entry.dart';
 import 'package:wger/features/doses/models/regimen.dart';
 
@@ -79,6 +80,52 @@ class DoseRepository {
         (t) => OrderingTerm(expression: t.id),
       ]);
     return query.watch();
+  }
+
+  /// All medications, by name.
+  Stream<List<Medication>> watchMedications() {
+    final query = _db.select(_db.medicationTable)
+      ..orderBy([(t) => OrderingTerm(expression: t.name), (t) => OrderingTerm(expression: t.id)]);
+    return query.watch();
+  }
+
+  /// The regimens that have no end date.
+  Stream<List<Regimen>> watchOpenRegimens() {
+    final query = _db.select(_db.regimenTable)
+      ..where((t) => t.endDate.isNull())
+      ..orderBy([
+        (t) => OrderingTerm(expression: t.startDate),
+        (t) => OrderingTerm(expression: t.id),
+      ]);
+    return query.watch();
+  }
+
+  /// Ends the regimen [id]: it is no longer planned from [firstDayOff] on
+  /// (stored as the end date of the day before, which is inclusive). The doses
+  /// already logged stay.
+  Future<void> endRegimen(String id, DateTime firstDayOff) async {
+    await (_db.update(_db.regimenTable)..where((t) => t.id.equals(id))).write(
+      RegimenTableCompanion(endDate: Value(_dayBefore(firstDayOff))),
+    );
+  }
+
+  /// Ends every open regimen of the medication [medicationId] from
+  /// [firstDayOff] on, like [endRegimen].
+  Future<void> endOpenRegimensOf(String medicationId, DateTime firstDayOff) async {
+    await (_db.update(_db.regimenTable)
+          ..where((t) => t.medicationId.equals(medicationId) & t.endDate.isNull()))
+        .write(RegimenTableCompanion(endDate: Value(_dayBefore(firstDayOff))));
+  }
+
+  /// Sets the medication [id] inactive and ends its open regimens from
+  /// [firstDayOff] on.
+  Future<void> deactivateMedication(String id, DateTime firstDayOff) async {
+    await _db.transaction(() async {
+      await (_db.update(_db.medicationTable)..where((t) => t.id.equals(id))).write(
+        const MedicationTableCompanion(active: Value(false)),
+      );
+      await endOpenRegimensOf(id, firstDayOff);
+    });
   }
 
   /// The dose logs of the day [date].
@@ -148,6 +195,18 @@ class DoseRepository {
     required TimeOfDay usualTime,
     int order = 0,
   }) async {
+    // The server keeps slot names unique and would drop the upload silently
+    final clash =
+        await (_db.select(
+              _db.doseSlotTable,
+            )..where(
+              (t) =>
+                  t.name.equals(name) & (id == null ? const Constant(true) : t.id.equals(id).not()),
+            ))
+            .get();
+    if (clash.isNotEmpty) {
+      throw ArgumentError.value(name, 'name', 'A slot with this name exists');
+    }
     final newId = id ?? ps.uuid.v7();
     final companion = DoseSlotTableCompanion(
       id: Value(newId),
@@ -173,6 +232,20 @@ class DoseRepository {
     required DateTime startDate,
     DateTime? endDate,
   }) async {
+    if (endDate == null) {
+      final open =
+          await (_db.select(_db.regimenTable)..where(
+                (t) =>
+                    t.medicationId.equals(medicationId) &
+                    t.slotId.equals(slotId) &
+                    t.endDate.isNull() &
+                    (id == null ? const Constant(true) : t.id.equals(id).not()),
+              ))
+              .get();
+      if (open.isNotEmpty) {
+        throw ArgumentError.value(slotId, 'slotId', 'The medication is already in this slot');
+      }
+    }
     final newId = id ?? ps.uuid.v7();
     final companion = RegimenTableCompanion(
       id: Value(newId),
@@ -340,5 +413,7 @@ class DoseRepository {
 
   /// The calendar day of [date] as a UTC midnight, the shape the date-only
   /// converter reads back.
+  DateTime _dayBefore(DateTime date) => DateTime.utc(date.year, date.month, date.day - 1);
+
   DateTime _day(DateTime date) => DateTime.utc(date.year, date.month, date.day);
 }

@@ -91,9 +91,13 @@ void main() {
 
   test('watchRegimenOn excludes ended and not yet started regimens', () async {
     final ids = await medAndSlot();
-    Future<String> regimen(DateTime start, DateTime? end) => repo.saveRegimen(
+    final evening = await repo.saveSlot(
+      name: 'Evening',
+      usualTime: const TimeOfDay(hour: 20, minute: 0),
+    );
+    Future<String> regimen(DateTime start, DateTime? end, {String? slot}) => repo.saveRegimen(
       medicationId: ids.med,
-      slotId: ids.slot,
+      slotId: slot ?? ids.slot,
       amount: 1,
       unit: 'tablet',
       startDate: start,
@@ -103,10 +107,73 @@ void main() {
     final open = await regimen(DateTime(2026, 10, 1), null);
     final lastDay = await regimen(DateTime(2026, 10, 1), DateTime(2026, 10, 25));
     await regimen(DateTime(2026, 9, 1), DateTime(2026, 10, 24));
-    await regimen(DateTime(2026, 10, 26), null);
+    await regimen(DateTime(2026, 10, 26), null, slot: evening);
 
     final found = await repo.watchRegimenOn(DateTime(2026, 10, 25, 14, 30)).first;
     expect(found.map((r) => r.id).toSet(), {open, lastDay});
+  });
+
+  test('endRegimen and deactivateMedication end open regimens and keep doses', () async {
+    final ids = await medAndSlot();
+    final other = await repo.saveMedication(name: 'Statin', unit: 'mg');
+    final evening = await repo.saveSlot(
+      name: 'Evening',
+      usualTime: const TimeOfDay(hour: 20, minute: 0),
+    );
+    Future<String> regimen(String med, {String? slot}) => repo.saveRegimen(
+      medicationId: med,
+      slotId: slot ?? ids.slot,
+      amount: 1,
+      unit: 'tablet',
+      startDate: DateTime(2026, 10, 1),
+    );
+    final a = await regimen(ids.med);
+    final b = await regimen(ids.med, slot: evening);
+    final c = await regimen(other);
+    await dose(ids.med, DateTime(2026, 10, 20));
+
+    expect(await repo.watchOpenRegimens().first, hasLength(3));
+    await repo.endRegimen(a, DateTime(2026, 10, 25, 9));
+    expect((await repo.watchOpenRegimens().first).map((r) => r.id).toSet(), {b, c});
+
+    await repo.deactivateMedication(ids.med, DateTime(2026, 10, 25));
+    expect((await repo.watchOpenRegimens().first).map((r) => r.id), [c]);
+    final meds = await repo.watchMedications().first;
+    expect(meds.map((m) => m.name), ['Metformin', 'Statin']);
+    expect(meds.first.active, isFalse);
+    expect(meds.last.active, isTrue);
+    expect(await repo.watchDosesOn(DateTime(2026, 10, 20)).first, hasLength(1));
+
+    // Ended from the 25th: still planned on the 24th, not on the 25th
+    expect(await repo.watchRegimenOn(DateTime(2026, 10, 24)).first, hasLength(3));
+    final onDay = await repo.watchRegimenOn(DateTime(2026, 10, 25)).first;
+    expect(onDay.map((r) => r.id), [c]);
+  });
+
+  test('refuses a duplicate slot name and a second open regimen in a slot', () async {
+    final ids = await medAndSlot();
+    expect(
+      () => repo.saveSlot(name: 'Morning', usualTime: const TimeOfDay(hour: 9, minute: 0)),
+      throwsArgumentError,
+    );
+    // Saving the slot itself under its own name is fine
+    await repo.saveSlot(
+      id: ids.slot,
+      name: 'Morning',
+      usualTime: const TimeOfDay(hour: 9, minute: 0),
+    );
+
+    Future<String> regimen() => repo.saveRegimen(
+      medicationId: ids.med,
+      slotId: ids.slot,
+      amount: 1,
+      unit: 'tablet',
+      startDate: DateTime(2026, 10, 1),
+    );
+    final first = await regimen();
+    expect(regimen, throwsArgumentError);
+    await repo.endRegimen(first, DateTime(2026, 10, 25));
+    await regimen();
   });
 
   test('createRawEntry stores the time zone and a pending state', () async {

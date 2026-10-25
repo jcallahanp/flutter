@@ -1968,5 +1968,49 @@
       "min": { "type": "int" },
       "max": { "type": "int" }
     }
-  }
+  },
+  "routineTitle": "Routine",
+  "routineAddSlot": "Add slot",
+  "routineEditSlot": "Edit slot",
+  "routineSlotName": "Slot name",
+  "routineUsualTime": "Usual time (HH:MM)",
+  "routineOrder": "Order",
+  "routineInvalidTime": "Enter a time as HH:MM",
+  "routineNoSlots": "No slots yet. Add one, such as Morning.",
+  "routineNothingInSlot": "Nothing in this slot",
+  "routineAsNeeded": "As needed",
+  "routineMedications": "Medications",
+  "routineAddMedication": "Add medication",
+  "routineEditMedication": "Edit medication",
+  "routineStrength": "Strength",
+  "routineForm": "Form",
+  "routineKind": "Kind",
+  "routineKindRoutine": "Routine",
+  "routineKindAsNeeded": "As needed",
+  "routineKindOneOff": "One-off",
+  "routineSlot": "Slot",
+  "routineNoSlot": "No slot",
+  "routinePutInSlot": "Put in a slot",
+  "routineEnd": "End",
+  "routineEndTitle": "End this entry?",
+  "routineEndBody": "{medication} will not be listed in {slot} from today. Doses already logged are kept.",
+  "@routineEndBody": {
+    "placeholders": {
+      "medication": { "type": "String" },
+      "slot": { "type": "String" }
+    }
+  },
+  "routineDeactivate": "Deactivate",
+  "routineDeactivateTitle": "Deactivate this medication?",
+  "routineDeactivateBody": "{medication} will be marked inactive and removed from every slot from today. Doses already logged are kept.",
+  "@routineDeactivateBody": {
+    "placeholders": {
+      "medication": { "type": "String" }
+    }
+  },
+  "routineInactive": "Inactive",
+  "routineSlotExists": "A slot with this name already exists",
+  "routineAlreadyInSlot": "This medication is already in this slot",
+  "cancel": "Cancel",
+  "@cancel": { "description": "Label of a button that closes a dialog without changing anything" }
 }
