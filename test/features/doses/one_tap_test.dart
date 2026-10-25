@@ -77,14 +77,14 @@ void main() {
   test('one_tap_uses_slot_date', () {
     final now = DateTime(2026, 10, 25, 0, 40);
     final logged = [log('r-a', 'a', today), log('r-b', 'b', today)];
-    // Yesterday evening is still unlogged: it wins over today, even when
-    // today's slot happens to be logged
+    // Yesterday evening is still unlogged: it is the current occurrence, even
+    // when tonight's is already logged
     final date = defaultSlotDate(
       evening,
       now,
       regimen: regimen,
       medications: meds,
-      logged: [],
+      logged: logged,
     );
     expect(date, yesterday);
     final drafts = oneTapDrafts(
@@ -99,7 +99,7 @@ void main() {
     expect(drafts.every((d) => d.date == yesterday), isTrue);
   });
 
-  test('default slot date is today after 04:00 and when yesterday is logged', () {
+  test('default slot date: yesterday until 04:00 even when logged, today after', () {
     final all = [log('r-a', 'a', yesterday), log('r-b', 'b', yesterday)];
     expect(
       defaultSlotDate(
@@ -109,7 +109,19 @@ void main() {
         medications: meds,
         logged: all,
       ),
-      today,
+      yesterday,
+    );
+    // so a second tap at 00:40 adds nothing (tonight's dose is not logged early)
+    expect(
+      oneTapDrafts(
+        slot: evening,
+        slotDate: yesterday,
+        regimen: regimen,
+        medications: meds,
+        logged: all,
+        now: DateTime(2026, 10, 25, 0, 40),
+      ),
+      isEmpty,
     );
     expect(
       defaultSlotDate(

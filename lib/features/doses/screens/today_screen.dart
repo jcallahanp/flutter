@@ -21,6 +21,8 @@
  * logged today.
  */
 
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:wger/core/formatting/formatting.dart';
@@ -52,7 +54,7 @@ final _rawEntriesOnProvider = StreamProvider.autoDispose.family<List<RawEntry>, 
 );
 
 /// The Meds tab.
-class TodayScreen extends ConsumerWidget {
+class TodayScreen extends ConsumerStatefulWidget {
   /// The current time; tests inject one.
   final DateTime Function() clock;
 
@@ -61,9 +63,43 @@ class TodayScreen extends ConsumerWidget {
   static const routeName = '/doses-today';
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<TodayScreen> createState() => _TodayScreenState();
+}
+
+class _TodayScreenState extends ConsumerState<TodayScreen> {
+  Timer? _boundaryTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleBoundary();
+  }
+
+  @override
+  void dispose() {
+    _boundaryTimer?.cancel();
+    super.dispose();
+  }
+
+  /// Rebuilds at the next midnight or [slotCarryOverHour]:00, where "today" and
+  /// the slots' default dates change.
+  void _scheduleBoundary() {
+    final now = widget.clock();
+    final carry = DateTime(now.year, now.month, now.day, slotCarryOverHour);
+    final next = now.isBefore(carry) ? carry : DateTime(now.year, now.month, now.day + 1);
+    _boundaryTimer = Timer(next.difference(now), () {
+      if (!mounted) {
+        return;
+      }
+      setState(() {});
+      _scheduleBoundary();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final i18n = AppLocalizations.of(context);
-    final now = clock();
+    final now = widget.clock();
     final today = DateTime(now.year, now.month, now.day);
     final yesterday = DateTime(now.year, now.month, now.day - 1);
 
@@ -188,7 +224,7 @@ String _statusLabel(AppLocalizations i18n, String status) => switch (status) {
 String _amountText(BuildContext context, double amount, String unit) =>
     '${localizedNumberFormat(context).format(amount)} $unit';
 
-class _SlotCard extends ConsumerWidget {
+class _SlotCard extends ConsumerStatefulWidget {
   final DoseSlot slot;
   final DateTime now;
   final List<Regimen> regimen;
@@ -204,7 +240,46 @@ class _SlotCard extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_SlotCard> createState() => _SlotCardState();
+}
+
+class _SlotCardState extends ConsumerState<_SlotCard> {
+  bool _saving = false;
+
+  Future<void> _save(List<DoseDraft> drafts) async {
+    if (_saving) {
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      final repo = ref.read(doseRepositoryProvider);
+      for (final d in drafts) {
+        await repo.logDose(
+          medicationId: d.medicationId,
+          regimenId: d.regimenId,
+          date: d.date,
+          takenAt: d.takenAt,
+          plannedAmount: d.plannedAmount,
+          amount: d.amount,
+          unit: d.unit,
+          status: d.status,
+          source: d.source,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final slot = widget.slot;
+    final now = widget.now;
+    final regimen = widget.regimen;
+    final medications = widget.medications;
+    final logged = widget.logged;
     final i18n = AppLocalizations.of(context);
     final slotDate = defaultSlotDate(
       slot,
@@ -243,7 +318,7 @@ class _SlotCard extends ConsumerWidget {
           children: [
             Text(slot.name, style: Theme.of(context).textTheme.titleMedium),
             if (!isToday)
-              Text(i18n.todayForDay(i18n.todayYesterday, slot.name.toLowerCase())),
+              Text(i18n.todayYesterdaySlot(slot.name)),
             const SizedBox(height: 4),
             for (final item in items)
               ListTile(
@@ -251,34 +326,15 @@ class _SlotCard extends ConsumerWidget {
                 contentPadding: EdgeInsets.zero,
                 title: Text(names[item.medicationId] ?? ''),
                 subtitle: Text(_amountText(context, item.amount, item.unit)),
-                trailing: Text(
-                  doneOn[item.id] == null
-                      ? i18n.todayNotLogged
-                      : _statusLabel(i18n, doneOn[item.id]!.status),
-                ),
+                trailing: doneOn[item.id] == null
+                    ? Text(i18n.todayNotLogged)
+                    : _StatusChip(doneOn[item.id]!.status),
               ),
             Align(
               alignment: Alignment.centerRight,
               child: FilledButton(
                 key: Key('took-as-planned-${slot.name}'),
-                onPressed: drafts.isEmpty
-                    ? null
-                    : () async {
-                        final repo = ref.read(doseRepositoryProvider);
-                        for (final d in drafts) {
-                          await repo.logDose(
-                            medicationId: d.medicationId,
-                            regimenId: d.regimenId,
-                            date: d.date,
-                            takenAt: d.takenAt,
-                            plannedAmount: d.plannedAmount,
-                            amount: d.amount,
-                            unit: d.unit,
-                            status: d.status,
-                            source: d.source,
-                          );
-                        }
-                      },
+                onPressed: drafts.isEmpty || _saving ? null : () => _save(drafts),
                 child: Text(i18n.todayTookAsPlanned),
               ),
             ),
@@ -289,6 +345,16 @@ class _SlotCard extends ConsumerWidget {
   }
 }
 
+class _StatusChip extends StatelessWidget {
+  final String status;
+
+  const _StatusChip(this.status);
+
+  @override
+  Widget build(BuildContext context) =>
+      Chip(label: Text(_statusLabel(AppLocalizations.of(context), status)));
+}
+
 class _DoseTile extends StatelessWidget {
   final DoseLog dose;
   final List<Medication> medications;
@@ -297,14 +363,13 @@ class _DoseTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final i18n = AppLocalizations.of(context);
     final name = medications.where((m) => m.id == dose.medicationId).firstOrNull?.name ?? '';
     final skippedOrMissed = dose.status == 'skipped' || dose.status == 'missed';
     return ListTile(
       key: Key('dose-${dose.id}'),
       title: Text(name),
       subtitle: skippedOrMissed ? null : Text(_amountText(context, dose.amount, dose.unit)),
-      trailing: Chip(label: Text(_statusLabel(i18n, dose.status))),
+      trailing: _StatusChip(dose.status),
     );
   }
 }

@@ -133,11 +133,11 @@ List<DoseDraft> oneTapDrafts({
 /// The date a one-tap on [slot] logs for at [now]: the latest occurrence
 /// that is current and still has unlogged items. An occurrence on day D runs
 /// until [slotCarryOverHour]:00 on D+1, so before that hour yesterday's is
-/// current, and it is the later one while today's has not started (now is
-/// before the slot's usual time).
+/// current, and it is the only current one while today's has not started
+/// (now is before the slot's usual time), whether or not it is fully logged.
 ///
-/// With nothing unlogged on either, the current occurrence: today, or
-/// yesterday before the carry-over hour while today's has not started.
+/// Otherwise today if it has unlogged items, then yesterday (before the
+/// carry-over hour) if it has, else today.
 DateTime defaultSlotDate(
   DoseSlot slot,
   DateTime now, {
@@ -160,18 +160,16 @@ DateTime defaultSlotDate(
   final usual = slot.usualTime.hour * 60 + slot.usualTime.minute;
   final started = now.hour * 60 + now.minute >= usual;
 
-  // Before the carry-over hour, yesterday's occurrence is still the current
-  // one unless today's has already started
-  if (carryOver && !started && hasUnlogged(yesterday)) {
+  // Before the carry-over hour, today's occurrence has not started until the
+  // slot's usual time: yesterday's is the current one, logged or not, and
+  // tonight's dose is never logged early
+  if (carryOver && !started) {
     return yesterday;
   }
   if (hasUnlogged(today)) {
     return today;
   }
   if (carryOver && hasUnlogged(yesterday)) {
-    return yesterday;
-  }
-  if (carryOver && !started) {
     return yesterday;
   }
   return today;

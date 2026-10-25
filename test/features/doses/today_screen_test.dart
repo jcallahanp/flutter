@@ -12,9 +12,10 @@ import '../../helpers/in_memory_drift.dart';
 void main() {
   late DriftPowersyncDatabase db;
   late DoseRepository repo;
-  final now = DateTime(2026, 10, 25, 12, 0);
+  var now = DateTime(2026, 10, 25, 12, 0);
 
   setUp(() async {
+    now = DateTime(2026, 10, 25, 12, 0);
     db = await openTestDatabase();
     repo = DoseRepository(db, detectTimezone: () async => 'Europe/Berlin');
   });
@@ -82,6 +83,56 @@ void main() {
     expect(doses.every((d) => d.takenAt != null && d.plannedAmount == 1), isTrue);
     expect(tester.widget<FilledButton>(find.byKey(key)).onPressed, isNull);
     expect(find.text('Taken'), findsWidgets);
+    await finish(tester);
+  });
+
+  Future<void> seedEvening() async {
+    final slot = await repo.saveSlot(
+      name: 'Evening',
+      usualTime: const TimeOfDay(hour: 21, minute: 0),
+    );
+    final med = await repo.saveMedication(name: 'Metformin', unit: 'mg');
+    await repo.saveRegimen(
+      medicationId: med,
+      slotId: slot,
+      amount: 1,
+      unit: 'tablet',
+      startDate: DateTime(2026, 1, 1),
+    );
+  }
+
+  testWidgets('after midnight the slot is logged for yesterday and says so', (tester) async {
+    now = DateTime(2026, 10, 25, 0, 40);
+    await tester.runAsync(seedEvening);
+    await pump(tester);
+    expect(find.text('Yesterday · Evening'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('took-as-planned-Evening')));
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 300)));
+    await tester.pumpAndSettle();
+
+    final doses = await tester.runAsync(() => repo.watchDosesOn(DateTime(2026, 10, 24)).first);
+    expect(doses, hasLength(1));
+    final today = await tester.runAsync(() => repo.watchDosesOn(DateTime(2026, 10, 25)).first);
+    expect(today, isEmpty);
+    expect(
+      tester.widget<FilledButton>(find.byKey(const Key('took-as-planned-Evening'))).onPressed,
+      isNull,
+    );
+    await finish(tester);
+  });
+
+  testWidgets('shows a pending line for entries waiting to be parsed', (tester) async {
+    await tester.runAsync(() async {
+      await seedEvening();
+      await repo.createRawEntry('took my pills');
+      await repo.createRawEntry('and an aspirin');
+    });
+    // the entries are stamped with the real clock
+    now = DateTime.now();
+    await pump(tester);
+    expect(find.byKey(const Key('pending-entries')), findsOneWidget);
+    expect(find.text('2 entries pending'), findsOneWidget);
     await finish(tester);
   });
 }

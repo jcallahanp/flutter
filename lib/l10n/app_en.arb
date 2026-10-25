@@ -1975,16 +1975,13 @@
   "@todayTitle": { "description": "Title of the medication screen showing today's doses" },
   "todayTookAsPlanned": "Took as planned",
   "@todayTookAsPlanned": { "description": "Button that logs every not yet logged medication of a slot as taken at the planned amount" },
-  "todayForDay": "For {day}'s {slot}",
-  "@todayForDay": {
-    "description": "Shown on a slot card when the button logs for another day than today, such as yesterday's evening slot",
+  "todayYesterdaySlot": "Yesterday · {slot}",
+  "@todayYesterdaySlot": {
+    "description": "Shown on a slot card when the button logs for yesterday's occurrence of the slot, such as after midnight",
     "placeholders": {
-      "day": { "type": "String" },
       "slot": { "type": "String" }
     }
   },
-  "todayYesterday": "yesterday",
-  "@todayYesterday": { "description": "The previous day, used in the sentence naming the day a slot is logged for" },
   "todayNotLogged": "Not logged",
   "@todayNotLogged": { "description": "Status of a planned medication that has no dose logged yet" },
   "doseStatusTaken": "Taken",

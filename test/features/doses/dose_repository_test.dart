@@ -281,6 +281,31 @@ void main() {
     expect(await db.select(db.doseLogTable).get(), hasLength(4));
   });
 
+  test('concurrent logDose calls for one (regimen, date) leave one row', () async {
+    final ids = await medAndSlot();
+    final regimenId = await repo.saveRegimen(
+      medicationId: ids.med,
+      slotId: ids.slot,
+      amount: 1,
+      unit: 'tablet',
+      startDate: DateTime(2026, 10, 1),
+    );
+    Future<String> log() => repo.logDose(
+      medicationId: ids.med,
+      regimenId: regimenId,
+      date: DateTime(2026, 10, 25),
+      amount: 1,
+      unit: 'tablet',
+      status: 'taken',
+      source: 'one_tap',
+    );
+
+    final results = await Future.wait([log(), log(), log()]);
+
+    expect(results.toSet(), hasLength(1));
+    expect(await db.select(db.doseLogTable).get(), hasLength(1));
+  });
+
   test('updateDose changes only the fields passed', () async {
     final ids = await medAndSlot();
     final regimenId = await repo.saveRegimen(
