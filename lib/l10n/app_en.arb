@@ -1969,6 +1969,49 @@
       "max": { "type": "int" }
     }
   },
+  "labelBottomNavMeds": "Meds",
+  "@labelBottomNavMeds": { "description": "Label of the bottom navigation tab for medication dose logging" },
+  "todayTitle": "Today",
+  "@todayTitle": { "description": "Title of the medication screen showing today's doses" },
+  "todayTookAsPlanned": "Took as planned",
+  "@todayTookAsPlanned": { "description": "Button that logs every not yet logged medication of a slot as taken at the planned amount" },
+  "todayForDay": "For {day}'s {slot}",
+  "@todayForDay": {
+    "description": "Shown on a slot card when the button logs for another day than today, such as yesterday's evening slot",
+    "placeholders": {
+      "day": { "type": "String" },
+      "slot": { "type": "String" }
+    }
+  },
+  "todayYesterday": "yesterday",
+  "@todayYesterday": { "description": "The previous day, used in the sentence naming the day a slot is logged for" },
+  "todayNotLogged": "Not logged",
+  "@todayNotLogged": { "description": "Status of a planned medication that has no dose logged yet" },
+  "doseStatusTaken": "Taken",
+  "@doseStatusTaken": { "description": "Status chip of a dose that was taken" },
+  "doseStatusPartial": "Partial",
+  "@doseStatusPartial": { "description": "Status chip of a dose that was taken in part" },
+  "doseStatusSkipped": "Skipped",
+  "@doseStatusSkipped": { "description": "Status chip of a dose that was skipped" },
+  "doseStatusMissed": "Missed",
+  "@doseStatusMissed": { "description": "Status chip of a dose that was missed" },
+  "todayLoggedTitle": "Logged today",
+  "@todayLoggedTitle": { "description": "Heading of today's list of logged doses" },
+  "todayNothingLogged": "Nothing logged yet today",
+  "@todayNothingLogged": { "description": "Shown when no dose is logged for today" },
+  "todayPendingEntries": "{count, plural, =1{1 entry pending} other{{count} entries pending}}",
+  "@todayPendingEntries": {
+    "description": "Line for typed entries that are waiting to be read by the server, shown with a pending chip",
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "todayPending": "Pending",
+  "@todayPending": { "description": "Chip on the line of entries waiting to be parsed" },
+  "todayNoSlots": "No slots in your routine yet.",
+  "@todayNoSlots": { "description": "Empty state of the medication screen when no slots exist" },
+  "todaySetUpRoutine": "Set up routine",
+  "@todaySetUpRoutine": { "description": "Button and tooltip that open the routine setup screen" },
   "routineTitle": "Routine",
   "routineAddSlot": "Add slot",
   "routineEditSlot": "Edit slot",

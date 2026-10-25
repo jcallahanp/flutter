@@ -21,6 +21,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:wger/core/dashboard.dart';
 import 'package:wger/core/material.dart';
 import 'package:wger/features/account/providers/timezone_sync.dart';
+import 'package:wger/features/doses/screens/today_screen.dart';
 import 'package:wger/features/gallery/screens/gallery_screen.dart';
 import 'package:wger/features/health/providers/health_sync.dart';
 import 'package:wger/features/measurements/screens/measurement_categories_screen.dart';
@@ -80,6 +81,7 @@ class _HomeTabsScreenState extends ConsumerState<HomeTabsScreen>
     const RoutineListScreen(),
     const NutritionalPlansScreen(),
     const MeasurementCategoriesScreen(),
+    const TodayScreen(),
     const GalleryScreen(),
   ];
 
@@ -101,6 +103,10 @@ class _HomeTabsScreenState extends ConsumerState<HomeTabsScreen>
       NavigationDestination(
         icon: const Icon(Icons.area_chart),
         label: AppLocalizations.of(context).labelBottomNavBody,
+      ),
+      NavigationDestination(
+        icon: const Icon(Icons.medication),
+        label: AppLocalizations.of(context).labelBottomNavMeds,
       ),
       NavigationDestination(
         icon: const Icon(Icons.photo_library),
