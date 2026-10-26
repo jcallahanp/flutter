@@ -18,6 +18,7 @@
 
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:material_ui/material_ui.dart';
@@ -165,7 +166,7 @@ class AboutPage extends ConsumerWidget {
 
               // Don't show the donate section under iOS. The app was rejected once because
               // although the donations are optional, they must be done using in-app purchases
-              if (!Platform.isIOS)
+              if (kIsWeb || !Platform.isIOS)
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [

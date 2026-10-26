@@ -18,7 +18,12 @@
 
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:package_info_plus/package_info_plus.dart';
+
+/// `web` in the browser, where `dart:io`'s Platform getters throw; the OS
+/// name (`android`, `ios`, ...) everywhere else.
+String appPlatformName({bool isWeb = kIsWeb}) => isWeb ? 'web' : Platform.operatingSystem;
 
 /// User-agent header string identifying the app/version/platform.
 String getAppNameHeader(PackageInfo? applicationVersion) {
@@ -28,7 +33,7 @@ String getAppNameHeader(PackageInfo? applicationVersion) {
         '/${applicationVersion.version} '
         '(${applicationVersion.packageName}; '
         'build: ${applicationVersion.buildNumber}; '
-        'platform: ${Platform.operatingSystem})'
+        'platform: ${appPlatformName()})'
         ' - https://github.com/wger-project';
   }
   return 'wger App$out';
