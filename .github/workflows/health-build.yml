@@ -1,12 +1,20 @@
 # Health platform (jcallahanp/health-system M0-05): debug APK and web build
 # for every PR. Steps mirror docs/app/BUILD.md in health-system.
+# On master (and Run workflow) the builds go to the `dev-latest` pre-release:
+# app-debug.apk for phones, web.tar.gz for the server (served at /app/).
 name: Health build check
 on:
   pull_request:
+  push:
+    branches: [master]
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: health-build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -30,7 +38,51 @@ jobs:
         run: dart run powersync:setup_web
 
       - name: Build APK (debug)
-        run: flutter build apk --debug --dart-define=SERVER_URL=$SERVER_URL
+        run: |
+          echo "SERVER_URL=${SERVER_URL:-<unset, wger.de>}"
+          flutter build apk --debug --dart-define=SERVER_URL=$SERVER_URL
 
+      # Served by the stack's Caddy at https://<host>/app/, CanvasKit from our own host
       - name: Build web
-        run: flutter build web --dart-define=SERVER_URL=$SERVER_URL
+        run: flutter build web --base-href /app/ --no-web-resources-cdn --dart-define=SERVER_URL=$SERVER_URL
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-debug.apk dist/
+          tar -C build/web -czf dist/web.tar.gz .
+          (cd dist && sha256sum app-debug.apk web.tar.gz > SHA256SUMS)
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: health-build
+          path: dist/
+          retention-days: 14
+
+  publish:
+    name: Publish dev-latest
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SERVER_URL: ${{ vars.SERVER_URL }}
+    steps:
+      - name: Refuse builds without a server
+        run: |
+          [ -n "$SERVER_URL" ] || { echo "::error::Set the repository variable SERVER_URL (Settings, Secrets and variables, Actions, Variables)"; exit 1; }
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: health-build
+          path: dist
+
+      - name: Replace the dev-latest pre-release
+        run: |
+          gh release delete dev-latest --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+          gh release create dev-latest dist/app-debug.apk dist/web.tar.gz dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+            --title "Dev build $(echo "$GITHUB_SHA" | cut -c1-7)" \
+            --notes "Debug build of master for $SERVER_URL. Phone: download app-debug.apk and open it. Server: web.tar.gz is served at /app/."
