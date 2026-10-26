@@ -54,7 +54,7 @@ class HealthRepository {
 
   /// The measurement `source` value for readings from this platform: `apple`
   /// for Apple Health, `google` for Health Connect.
-  String get sourceName => Platform.isIOS ? 'apple' : 'google';
+  String get sourceName => !kIsWeb && Platform.isIOS ? 'apple' : 'google';
 
   /// How usable the device's health platform is.
   ///

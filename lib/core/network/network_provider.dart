@@ -21,6 +21,7 @@ import 'dart:io';
 
 import 'package:collection/collection.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart' show Provider;
 import 'package:http/http.dart' as http;
@@ -54,7 +55,12 @@ Future<ProbeResult> _defaultReachabilityCheck(
   String? userAgent,
   Duration timeout,
 ) async {
-  // No server configured yet: fall back to a generic internet check.
+  // No server configured yet: fall back to a generic internet check. The
+  // browser has no DNS lookup (InternetAddress throws on web), so there the
+  // connectivity signal alone decides.
+  if (probeUri == null && kIsWeb) {
+    return (reachable: true, reason: 'no DNS lookup on web');
+  }
   if (probeUri == null) {
     try {
       final result = await InternetAddress.lookup('google.com').timeout(timeout);
