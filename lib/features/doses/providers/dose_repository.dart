@@ -28,14 +28,42 @@ import 'package:material_ui/material_ui.dart' show TimeOfDay;
 import 'package:powersync/powersync.dart' as ps;
 import 'package:wger/database/converters/date_only_text_converter.dart';
 import 'package:wger/database/powersync/database.dart';
+import 'package:wger/features/doses/logic/one_tap.dart';
 import 'package:wger/features/doses/models/dose_log.dart';
 import 'package:wger/features/doses/models/dose_slot.dart';
 import 'package:wger/features/doses/models/medication.dart';
+import 'package:wger/features/doses/models/parse_result.dart';
 import 'package:wger/features/doses/models/raw_entry.dart';
 import 'package:wger/features/doses/models/regimen.dart';
 
 /// Longest free text the server accepts.
 const rawEntryMaxLength = 2000;
+
+/// The largest amount the server stores (10 digits, 3 of them decimals).
+const maxDoseAmount = 10000000;
+
+/// [text] as a dose amount (a comma counts as the decimal point), rounded to
+/// the 3 places the server keeps. `null` for anything that is not a plain
+/// finite number below [maxDoseAmount]: NaN, Infinity and 1e400 would break
+/// reads or block the upload queue.
+double? parseDoseAmount(String text) {
+  final value = double.tryParse(text.trim().replaceAll(',', '.'));
+  if (value == null || !value.isFinite || value.abs() >= maxDoseAmount) {
+    return null;
+  }
+  return (value * 1000).round() / 1000;
+}
+
+void _checkAmount(String name, double? value) {
+  if (value != null && (!value.isFinite || value.abs() >= maxDoseAmount)) {
+    throw ArgumentError.value(value, name, 'Not an amount the server can store');
+  }
+}
+
+/// [text] cut to at most [rawEntryMaxLength] code points; a surrogate pair is
+/// never split.
+String truncateToEntryLimit(String text) =>
+    String.fromCharCodes(text.runes.take(rawEntryMaxLength));
 
 final doseRepositoryProvider = Provider<DoseRepository>((ref) {
   final db = ref.read(driftPowerSyncDatabase);
@@ -74,6 +102,21 @@ class DoseRepository {
         (t) =>
             t.startDate.isSmallerOrEqualValue(day) &
             (t.endDate.isNull() | t.endDate.isBiggerOrEqualValue(day)),
+      )
+      ..orderBy([
+        (t) => OrderingTerm(expression: t.startDate),
+        (t) => OrderingTerm(expression: t.id),
+      ]);
+    return query.watch();
+  }
+
+  /// The regimens in force on at least one day from [from] to [to].
+  Stream<List<Regimen>> watchRegimenBetween(DateTime from, DateTime to) {
+    final query = _db.select(_db.regimenTable)
+      ..where(
+        (t) =>
+            t.startDate.isSmallerOrEqualValue(_dayText(to)) &
+            (t.endDate.isNull() | t.endDate.isBiggerOrEqualValue(_dayText(from))),
       )
       ..orderBy([
         (t) => OrderingTerm(expression: t.startDate),
@@ -140,6 +183,51 @@ class DoseRepository {
     return query.watch();
   }
 
+  /// The dose logs from [from] to [to], both days inclusive.
+  Stream<List<DoseLog>> watchDosesBetween(DateTime from, DateTime to) {
+    final query = _db.select(_db.doseLogTable)
+      ..where(
+        (t) =>
+            t.date.isBiggerOrEqualValue(_dayText(from)) &
+            t.date.isSmallerOrEqualValue(_dayText(to)),
+      )
+      ..orderBy([(t) => OrderingTerm(expression: t.date), (t) => OrderingTerm(expression: t.id)]);
+    return query.watch();
+  }
+
+  /// The doses created from the raw entry [rawEntryId].
+  Stream<List<DoseLog>> watchDosesOfEntry(String rawEntryId) {
+    final query = _db.select(_db.doseLogTable)
+      ..where((t) => t.rawEntryId.equals(rawEntryId))
+      ..orderBy([(t) => OrderingTerm(expression: t.date), (t) => OrderingTerm(expression: t.id)]);
+    return query.watch();
+  }
+
+  /// The server's parse result of the raw entry [rawEntryId], `null` until it
+  /// has synced down.
+  Stream<ParseResult?> watchParseResultFor(String rawEntryId) {
+    final query = _db.select(_db.parseResultTable)
+      ..where((t) => t.rawEntryId.equals(rawEntryId))
+      ..orderBy([(t) => OrderingTerm.desc(t.created), (t) => OrderingTerm(expression: t.id)])
+      ..limit(1);
+    return query.watchSingleOrNull();
+  }
+
+  /// The entries written on or after the (device-local) day [from], oldest
+  /// first.
+  Stream<List<RawEntry>> watchRawEntriesSince(DateTime from) {
+    final start = DateTime(from.year, from.month, from.day);
+    // Filtered after parsing, see watchRawEntriesOn
+    return _db.select(_db.rawEntryTable).watch().map((rows) {
+      final recent = rows.where((e) => !e.createdOnDevice.isBefore(start)).toList();
+      recent.sort((a, b) {
+        final byTime = a.createdOnDevice.compareTo(b.createdOnDevice);
+        return byTime != 0 ? byTime : a.id.compareTo(b.id);
+      });
+      return recent;
+    });
+  }
+
   /// The free-text entries written on the (device-local) day [date].
   Stream<List<RawEntry>> watchRawEntriesOn(DateTime date) {
     final start = DateTime(date.year, date.month, date.day);
@@ -171,6 +259,7 @@ class DoseRepository {
     String kind = 'routine',
     bool active = true,
   }) async {
+    _checkAmount('strength', strength);
     final newId = id ?? ps.uuid.v7();
     final companion = MedicationTableCompanion(
       id: Value(newId),
@@ -232,6 +321,7 @@ class DoseRepository {
     required DateTime startDate,
     DateTime? endDate,
   }) async {
+    _checkAmount('amount', amount);
     if (endDate == null) {
       final open =
           await (_db.select(_db.regimenTable)..where(
@@ -265,6 +355,9 @@ class DoseRepository {
     return newId;
   }
 
+  /// Logs a dose. A second log for one (regimen, date) updates the existing
+  /// row (an explicit edit), or with [onlyIfAbsent] leaves it as it is and
+  /// returns its id (one-tap, missed prompt, proposals).
   Future<String> logDose({
     required String medicationId,
     String? regimenId,
@@ -277,7 +370,10 @@ class DoseRepository {
     required String source,
     String? rawEntryId,
     String note = '',
+    bool onlyIfAbsent = false,
   }) async {
+    _checkAmount('amount', amount);
+    _checkAmount('plannedAmount', plannedAmount);
     final companion = _doseCompanion(
       id: ps.uuid.v7(),
       medicationId: medicationId,
@@ -303,6 +399,9 @@ class DoseRepository {
                   ..where((t) => t.regimenId.equals(regimenId) & t.date.equals(_dayText(date)))
                   ..limit(1))
                 .getSingleOrNull();
+        if (existing != null && onlyIfAbsent) {
+          return existing.id;
+        }
         if (existing != null) {
           await (_db.update(_db.doseLogTable)..where((t) => t.id.equals(existing.id))).write(
             companion.copyWith(id: const Value.absent()),
@@ -313,6 +412,72 @@ class DoseRepository {
       await _db.into(_db.doseLogTable).insert(companion);
       return companion.id.value;
     });
+  }
+
+  /// Logs as taken, at the planned amount, the items of the slot [slotId] that
+  /// have no dose on [date] yet (the one-tap logic; a day past is stamped
+  /// with the slot's usual time, today with [now]), linked to [rawEntryId] so
+  /// Undo can remove them. Does nothing for an unknown slot.
+  Future<void> logRestTaken({
+    required String slotId,
+    required DateTime date,
+    required DateTime now,
+    String? rawEntryId,
+  }) async {
+    final slot = await (_db.select(
+      _db.doseSlotTable,
+    )..where((t) => t.id.equals(slotId))).getSingleOrNull();
+    if (slot == null) {
+      return;
+    }
+    final day = _dayText(date);
+    final regimen =
+        await (_db.select(_db.regimenTable)..where(
+              (t) =>
+                  t.startDate.isSmallerOrEqualValue(day) &
+                  (t.endDate.isNull() | t.endDate.isBiggerOrEqualValue(day)),
+            ))
+            .get();
+    final medications = await _db.select(_db.medicationTable).get();
+    final logged = await (_db.select(_db.doseLogTable)..where((t) => t.date.equals(day))).get();
+    final drafts = oneTapDrafts(
+      slot: slot,
+      slotDate: date,
+      regimen: regimen,
+      medications: medications,
+      logged: logged,
+      now: now,
+    );
+    for (final d in drafts) {
+      await logDose(
+        medicationId: d.medicationId,
+        regimenId: d.regimenId,
+        date: d.date,
+        takenAt: defaultTakenAt(date: date, now: now, usualTime: slot.usualTime),
+        plannedAmount: d.plannedAmount,
+        amount: d.amount,
+        unit: d.unit,
+        status: d.status,
+        source: d.source,
+        rawEntryId: rawEntryId,
+        onlyIfAbsent: true,
+      );
+    }
+  }
+
+  /// The usual time of the slot of the regimen [regimenId], `null` when the
+  /// regimen or its slot is unknown.
+  Future<TimeOfDay?> usualTimeOfRegimen(String regimenId) async {
+    final regimen = await (_db.select(
+      _db.regimenTable,
+    )..where((t) => t.id.equals(regimenId))).getSingleOrNull();
+    if (regimen == null) {
+      return null;
+    }
+    final slot = await (_db.select(
+      _db.doseSlotTable,
+    )..where((t) => t.id.equals(regimen.slotId))).getSingleOrNull();
+    return slot?.usualTime;
   }
 
   /// Changes the given fields of the dose [id]; those left out stay as they
@@ -331,6 +496,8 @@ class DoseRepository {
     Value<String?> rawEntryId = const Value.absent(),
     Value<String> note = const Value.absent(),
   }) async {
+    _checkAmount('amount', amount.present ? amount.value : null);
+    _checkAmount('plannedAmount', plannedAmount.present ? plannedAmount.value : null);
     final companion = DoseLogTableCompanion(
       medicationId: medicationId,
       regimenId: regimenId,
@@ -364,9 +531,10 @@ class DoseRepository {
     if (text.trim().isEmpty) {
       throw ArgumentError.value(text, 'text', 'An entry cannot be empty');
     }
-    if (text.length > rawEntryMaxLength) {
+    // The server counts code points
+    if (text.runes.length > rawEntryMaxLength) {
       throw ArgumentError.value(
-        text.length,
+        text.runes.length,
         'text',
         'Entries are limited to $rawEntryMaxLength characters',
       );

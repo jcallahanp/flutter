@@ -20,6 +20,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:wger/core/formatting/formatting.dart';
 import 'package:wger/core/wide_screen_wrapper.dart';
+import 'package:wger/features/doses/logic/one_tap.dart';
 import 'package:wger/features/doses/models/dose_slot.dart';
 import 'package:wger/features/doses/models/medication.dart';
 import 'package:wger/features/doses/models/regimen.dart';
@@ -70,16 +71,20 @@ class _RoutineList extends ConsumerWidget {
 
   const _RoutineList({required this.slots, required this.meds, required this.regimens});
 
-  /// Open regimens of active, non-one-off medications in [slot].
+  /// The items Today counts for [slot] now (see [slotItems]): active routine
+  /// medications with a regimen in force.
   List<({Regimen regimen, Medication med})> _rowsOf(DoseSlot slot, Map<String, Medication> byId) {
-    final rows = <({Regimen regimen, Medication med})>[];
-    for (final regimen in regimens) {
-      final med = byId[regimen.medicationId];
-      if (regimen.slotId == slot.id && med != null && med.active && med.kind != 'one_off') {
-        rows.add((regimen: regimen, med: med));
-      }
-    }
-    return rows;
+    final items = slotItems(
+      slot: slot,
+      date: DateTime.now(),
+      regimen: regimens,
+      medications: meds,
+    );
+    return [
+      for (final regimen in items)
+        if (byId[regimen.medicationId] != null)
+          (regimen: regimen, med: byId[regimen.medicationId]!),
+    ];
   }
 
   @override

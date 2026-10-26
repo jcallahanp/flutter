@@ -27,6 +27,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:wger/core/formatting/formatting.dart';
 import 'package:wger/core/wide_screen_wrapper.dart';
+import 'package:wger/database/powersync/powersync.dart' show syncStatus;
+import 'package:wger/features/doses/logic/missed.dart';
 import 'package:wger/features/doses/logic/one_tap.dart';
 import 'package:wger/features/doses/models/dose_log.dart';
 import 'package:wger/features/doses/models/dose_slot.dart';
@@ -34,7 +36,11 @@ import 'package:wger/features/doses/models/medication.dart';
 import 'package:wger/features/doses/models/raw_entry.dart';
 import 'package:wger/features/doses/models/regimen.dart';
 import 'package:wger/features/doses/providers/dose_repository.dart';
+import 'package:wger/features/doses/screens/history_screen.dart';
 import 'package:wger/features/doses/screens/routine_screen.dart';
+import 'package:wger/features/doses/widgets/entry_card.dart';
+import 'package:wger/features/doses/widgets/log_box.dart';
+import 'package:wger/features/doses/widgets/missed_prompt.dart';
 import 'package:wger/l10n/generated/app_localizations.dart';
 
 final _slotsProvider = StreamProvider.autoDispose<List<DoseSlot>>(
@@ -49,8 +55,23 @@ final _regimenOnProvider = StreamProvider.autoDispose.family<List<Regimen>, Date
 final _dosesOnProvider = StreamProvider.autoDispose.family<List<DoseLog>, DateTime>(
   (ref, day) => ref.watch(doseRepositoryProvider).watchDosesOn(day),
 );
-final _rawEntriesOnProvider = StreamProvider.autoDispose.family<List<RawEntry>, DateTime>(
-  (ref, day) => ref.watch(doseRepositoryProvider).watchRawEntriesOn(day),
+final _recentRegimenProvider = StreamProvider.autoDispose.family<List<Regimen>, DateTime>(
+  (ref, today) => ref
+      .watch(doseRepositoryProvider)
+      .watchRegimenBetween(
+        DateTime(today.year, today.month, today.day - missedLookbackDays),
+        today,
+      ),
+);
+final _recentDosesProvider = StreamProvider.autoDispose.family<List<DoseLog>, DateTime>(
+  (ref, today) => ref
+      .watch(doseRepositoryProvider)
+      .watchDosesBetween(DateTime(today.year, today.month, today.day - missedLookbackDays), today),
+);
+final _recentEntriesProvider = StreamProvider.autoDispose.family<List<RawEntry>, DateTime>(
+  (ref, today) => ref
+      .watch(doseRepositoryProvider)
+      .watchRawEntriesSince(DateTime(today.year, today.month, today.day - missedLookbackDays)),
 );
 
 /// The Meds tab.
@@ -109,7 +130,9 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
     final regimenYesterday = ref.watch(_regimenOnProvider(yesterday)).value;
     final dosesToday = ref.watch(_dosesOnProvider(today)).value;
     final dosesYesterday = ref.watch(_dosesOnProvider(yesterday)).value;
-    final entries = ref.watch(_rawEntriesOnProvider(today)).value;
+    final recentRegimen = ref.watch(_recentRegimenProvider(today)).value;
+    final recentDoses = ref.watch(_recentDosesProvider(today)).value;
+    final recentEntries = ref.watch(_recentEntriesProvider(today)).value;
 
     final ready =
         slots != null &&
@@ -118,7 +141,9 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
         regimenYesterday != null &&
         dosesToday != null &&
         dosesYesterday != null &&
-        entries != null;
+        recentRegimen != null &&
+        recentDoses != null &&
+        recentEntries != null;
 
     Widget body;
     if (!ready) {
@@ -127,30 +152,59 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
       body = _EmptyState(onOpenRoutine: () => _openRoutine(context));
     } else {
       // A regimen can be in force on one of the two days only
-      final regimen = {for (final r in [...regimenYesterday, ...regimenToday]) r.id: r}.values
-          .toList();
+      final regimen = {
+        for (final r in [...regimenYesterday, ...regimenToday]) r.id: r,
+      }.values.toList();
       final logged = [...dosesYesterday, ...dosesToday];
-      final pending = entries.where((e) => e.state == 'pending' || e.state == 'no_key').length;
-      body = ListView(
-        padding: const EdgeInsets.all(8),
+      final missed = missedSlots(
+        today: today,
+        slots: slots,
+        regimen: recentRegimen,
+        medications: meds,
+        doses: recentDoses,
+        entries: recentEntries,
+        now: now,
+      );
+      final repliesOf = <String, List<RawEntry>>{};
+      for (final e in recentEntries) {
+        if (e.parentId != null) {
+          (repliesOf[e.parentId!] ??= []).add(e);
+        }
+      }
+      final roots = _visibleRoots(recentEntries, repliesOf, today);
+      body = Column(
         children: [
-          for (final slot in slots)
-            _SlotCard(
-              slot: slot,
-              now: now,
-              regimen: regimen,
-              medications: meds,
-              logged: logged,
+          // Outside the list so a half-typed text survives scrolling
+          const LogBox(),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.all(8),
+              children: [
+                // Not before the first sync: a fresh install has nothing to compare with
+                if (ref.watch(syncStatus).hasSynced == true)
+                  MissedPrompt(missed: missed, today: today),
+                for (final slot in slots)
+                  _SlotCard(
+                    slot: slot,
+                    now: now,
+                    regimen: regimen,
+                    medications: meds,
+                    logged: logged,
+                  ),
+                for (final e in roots)
+                  EntryCard(
+                    entry: e,
+                    repliesOf: repliesOf,
+                    medications: meds,
+                    slots: slots,
+                    now: now,
+                  ),
+                _SectionTitle(i18n.todayLoggedTitle),
+                if (dosesToday.isEmpty) ListTile(title: Text(i18n.todayNothingLogged)),
+                for (final dose in dosesToday) _DoseTile(dose: dose, medications: meds),
+              ],
             ),
-          if (pending > 0)
-            ListTile(
-              key: const Key('pending-entries'),
-              leading: Chip(label: Text(i18n.todayPending)),
-              title: Text(i18n.todayPendingEntries(pending)),
-            ),
-          _SectionTitle(i18n.todayLoggedTitle),
-          if (dosesToday.isEmpty) ListTile(title: Text(i18n.todayNothingLogged)),
-          for (final dose in dosesToday) _DoseTile(dose: dose, medications: meds),
+          ),
         ],
       );
     }
@@ -159,6 +213,14 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
       appBar: AppBar(
         title: Text(i18n.todayTitle),
         actions: [
+          IconButton(
+            key: const Key('open-history'),
+            icon: const Icon(Icons.history),
+            tooltip: i18n.historyOpen,
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => HistoryScreen(clock: widget.clock)),
+            ),
+          ),
           IconButton(
             key: const Key('open-routine'),
             icon: const Icon(Icons.tune),
@@ -170,6 +232,38 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
       body: WidescreenWrapper(child: body),
     );
   }
+}
+
+const _openStates = {'pending', 'no_key', 'needs_answer'};
+
+/// The entries Today lists, oldest first: those of today, and earlier ones
+/// still waiting (pending, no key, or with a question) so they do not vanish
+/// at midnight. A thread shows when any entry in it qualifies; replies show
+/// under their parent, at any depth.
+List<RawEntry> _visibleRoots(
+  List<RawEntry> entries,
+  Map<String, List<RawEntry>> repliesOf,
+  DateTime today,
+) {
+  bool qualifies(RawEntry e) {
+    final local = e.createdOnDevice.toLocal();
+    if (DateTime(local.year, local.month, local.day) == today) {
+      return true;
+    }
+    // A question that has a reply is answered; the reply carries on the thread
+    final answered = e.state == 'needs_answer' && (repliesOf[e.id] ?? const []).isNotEmpty;
+    return _openStates.contains(e.state) && !answered;
+  }
+
+  bool threadQualifies(RawEntry e, Set<String> seen) =>
+      seen.add(e.id) &&
+      (qualifies(e) || (repliesOf[e.id] ?? const []).any((r) => threadQualifies(r, seen)));
+
+  final ids = {for (final e in entries) e.id};
+  return [
+    for (final e in entries)
+      if ((e.parentId == null || !ids.contains(e.parentId)) && threadQualifies(e, {})) e,
+  ];
 }
 
 void _openRoutine(BuildContext context) {
@@ -264,6 +358,7 @@ class _SlotCardState extends ConsumerState<_SlotCard> {
           unit: d.unit,
           status: d.status,
           source: d.source,
+          onlyIfAbsent: true,
         );
       }
     } finally {
@@ -317,8 +412,7 @@ class _SlotCardState extends ConsumerState<_SlotCard> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(slot.name, style: Theme.of(context).textTheme.titleMedium),
-            if (!isToday)
-              Text(i18n.todayYesterdaySlot(slot.name)),
+            if (!isToday) Text(i18n.todayYesterdaySlot(slot.name)),
             const SizedBox(height: 4),
             for (final item in items)
               ListTile(
